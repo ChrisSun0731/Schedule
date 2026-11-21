@@ -1,0 +1,40 @@
+{
+  "name": "nursing-shift-scheduler",
+  "version": "1.0.0",
+  "description": "護理排班與換班管理系統",
+  "productName": "護理排班系統",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "quasar dev",
+    "build": "quasar build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run --project unit",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-nursing-schedule \"vitest run --project rules\"",
+    "emulators": "firebase emulators:start --only auth,firestore --project demo-nursing-schedule",
+    "postinstall": "quasar prepare --silent"
+  },
+  "dependencies": {
+    "@quasar/extras": "^2.1.0",
+    "firebase": "^13.4.0",
+    "pinia": "^4.0.2",
+    "quasar": "^2.35.6",
+    "vue": "^3.5.22",
+    "vue-router": "^5.0.6",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@quasar/app-vite": "^3.10.4",
+    "@types/node": "^22.19.11",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "sass-embedded": "^1.108.2",
+    "typescript": "^6.0.0",
+    "vitest": "^5.1.1",
+    "vue-tsc": "^3.3.3"
+  },
+  "engines": {
+    "node": ">= 26 || ^24 || ^22.12"
+  }
+}

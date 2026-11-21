@@ -1,0 +1,185 @@
+<template>
+  <q-layout>
+    <q-page-container>
+      <q-page class="login-page flex flex-center q-pa-md">
+        <q-card flat class="login-card">
+          <q-card-section class="text-center q-pt-xl">
+            <div class="brand-mark q-mx-auto q-mb-md">
+              <q-icon name="medical_services" size="34px" color="white" />
+            </div>
+            <div class="text-h5 text-weight-bold">護理排班系統</div>
+            <div class="text-caption text-grey-7 q-mt-xs">班表 · 換班 · 請假</div>
+          </q-card-section>
+
+          <!-- Firebase not configured -->
+          <q-card-section v-if="!isFirebaseConfigured">
+            <q-banner rounded class="bg-orange-1 text-orange-10">
+              <template #avatar><q-icon name="settings_suggest" color="orange-9" /></template>
+              尚未設定 Firebase
+              <div class="text-caption q-mt-xs">
+                設定 <code>VITE_FIREBASE_*</code> 環境變數（見 <code>.env.example</code>）後重新建置。
+              </div>
+            </q-banner>
+          </q-card-section>
+
+          <q-card-section v-else-if="auth.status === 'loading'" class="flex flex-center q-py-xl">
+            <q-spinner-dots size="40px" color="primary" />
+          </q-card-section>
+
+          <!-- Signed in but no profile -->
+          <q-card-section v-else-if="auth.status === 'unregistered' || auth.status === 'inactive'" class="text-center">
+            <q-icon :name="auth.status === 'inactive' ? 'block' : 'person_off'" size="44px" color="grey-6" />
+            <div class="text-subtitle1 text-weight-medium q-mt-sm">
+              {{ auth.status === 'inactive' ? '帳號已停用' : '帳號尚未註冊' }}
+            </div>
+            <q-chip outline color="grey-8" icon="mail" class="q-mt-sm">{{ auth.email }}</q-chip>
+            <div class="text-caption text-grey-7 q-mt-sm">請聯絡系統管理員</div>
+            <q-btn class="q-mt-md full-width" outline no-caps color="primary" icon="switch_account" label="切換帳號" @click="switchAccount" />
+          </q-card-section>
+
+          <!-- Sign in -->
+          <q-card-section v-else class="q-px-lg q-pb-lg">
+            <q-btn
+              unelevated
+              no-caps
+              class="google-btn full-width"
+              :loading="busy"
+              @click="signIn"
+            >
+              <svg class="q-mr-sm" width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/>
+              </svg>
+              使用 Google 帳號登入
+            </q-btn>
+
+            <q-banner v-if="auth.error" dense rounded class="bg-red-1 text-negative q-mt-md">
+              <template #avatar><q-icon name="error_outline" /></template>
+              {{ auth.error }}
+            </q-banner>
+
+            <q-expansion-item
+              v-if="useEmulators"
+              dense
+              icon="science"
+              label="測試帳號（Emulator）"
+              class="q-mt-lg emu-box"
+              header-class="text-orange-10"
+            >
+              <div class="q-pa-sm">
+                <div class="row q-gutter-xs q-mb-sm">
+                  <q-chip
+                    v-for="acc in testAccounts"
+                    :key="acc.email"
+                    clickable
+                    dense
+                    outline
+                    color="orange-10"
+                    @click="emuSignIn(acc.email)"
+                  >
+                    {{ acc.label }}
+                  </q-chip>
+                </div>
+                <q-input v-model="emuEmail" dense outlined type="email" label="Email" @keyup.enter="emuSignIn(emuEmail)">
+                  <template #append>
+                    <q-btn flat dense round icon="login" @click="emuSignIn(emuEmail)" />
+                  </template>
+                </q-input>
+              </div>
+            </q-expansion-item>
+          </q-card-section>
+        </q-card>
+      </q-page>
+    </q-page-container>
+  </q-layout>
+</template>
+
+<script setup lang="ts">
+import { ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { isFirebaseConfigured, useEmulators } from '@/services/firebase';
+import { useAuthStore } from '@/stores/auth';
+
+const auth = useAuthStore();
+const router = useRouter();
+const route = useRoute();
+const busy = ref(false);
+const emuEmail = ref('');
+
+const testAccounts = [
+  { label: '系統管理員', email: 'admin@example.com' },
+  { label: '護理長', email: 'head@example.com' },
+  { label: '護理師 01', email: 'nurse01@example.com' },
+  { label: '護理師 02', email: 'nurse02@example.com' },
+];
+
+watch(
+  () => auth.status,
+  (status) => {
+    if (status === 'ready') {
+      const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/schedule';
+      void router.replace(redirect.startsWith('/') ? redirect : '/schedule');
+    }
+  },
+  { immediate: true },
+);
+
+async function signIn(): Promise<void> {
+  busy.value = true;
+  try {
+    await auth.signInWithGoogle();
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function emuSignIn(email: string): Promise<void> {
+  if (!email) return;
+  await auth.signInWithEmulatorAccount(email.trim().toLowerCase());
+}
+
+async function switchAccount(): Promise<void> {
+  await auth.logout();
+}
+</script>
+
+<style scoped lang="scss">
+.login-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(15, 110, 114, 0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, rgba(224, 122, 95, 0.16), transparent 60%),
+    #f4f6f8;
+}
+.login-card {
+  width: 380px;
+  max-width: 100%;
+  border-radius: 18px;
+  border: 1px solid #e3e8ec;
+  box-shadow: 0 18px 50px rgba(16, 42, 67, 0.08);
+}
+.brand-mark {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0b5f63, #13807f);
+  box-shadow: 0 8px 20px rgba(15, 110, 114, 0.35);
+}
+.google-btn {
+  background: #fff;
+  color: #3c4043;
+  border: 1px solid #dadce0;
+  height: 46px;
+  font-weight: 500;
+  font-size: 15px;
+}
+.emu-box {
+  border: 1px dashed #f0b27a;
+  border-radius: 10px;
+}
+</style>

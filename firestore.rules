@@ -1,0 +1,316 @@
+rules_version = '2';
+
+// Nursing shift scheduling – Firestore security rules
+//
+// Roles (users/{email}.role):
+//   developer   全部權限：人員/角色管理、系統設定、排班、發布、郵件、匯出
+//   head_nurse  排班、編輯任一格、發布並通知、審核換班/請假、寄送通知
+//   nurse       檢視已發布班表、提出/回覆換班、申請請假
+//
+// User documents are keyed by the lower-case Google account e-mail.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // Bootstrap: these Google accounts may create their own `developer`
+    // profile on first sign-in. Replace with your own e-mail before deploying.
+    // ------------------------------------------------------------------
+    function bootstrapDevelopers() {
+      return ['admin@example.com'];
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function userPath(email) {
+      return /databases/$(database)/documents/users/$(email);
+    }
+
+    function profile() {
+      return get(userPath(myEmail())).data;
+    }
+
+    function registered() {
+      return signedIn() && exists(userPath(myEmail())) && profile().active == true;
+    }
+
+    function hasRole(roles) {
+      return registered() && profile().role in roles;
+    }
+
+    function isDeveloper() {
+      return hasRole(['developer']);
+    }
+
+    function isManager() {
+      return hasRole(['developer', 'head_nurse']);
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function schedulePath(id) {
+      return /databases/$(database)/documents/schedules/$(id);
+    }
+
+    function swapPath(id) {
+      return /databases/$(database)/documents/swap_requests/$(id);
+    }
+
+    function settingsPath() {
+      return /databases/$(database)/documents/settings/app;
+    }
+
+    // ------------------------------------------------------------------
+    // users
+    // ------------------------------------------------------------------
+    function validUser(u, email) {
+      return u.id == email
+        && u.email == email
+        && u.role in ['developer', 'head_nurse', 'nurse']
+        && u.level in ['N0', 'N1', 'N2', 'N3']
+        && u.displayName is string && u.displayName.size() > 0
+        && u.employeeId is string
+        && u.allowedShifts is list && u.allowedShifts.hasOnly(['D', 'E', 'N'])
+        && u.schedulable is bool
+        && u.active is bool;
+    }
+
+    match /users/{email} {
+      // Everyone may read their own profile (so the app can tell "not registered" from "disabled").
+      allow read: if registered() || (signedIn() && email == myEmail());
+
+      allow create: if (isDeveloper() && validUser(request.resource.data, email))
+        || (signedIn()
+            && email == myEmail()
+            && myEmail() in bootstrapDevelopers()
+            && request.resource.data.role == 'developer'
+            && request.resource.data.active == true
+            && validUser(request.resource.data, email));
+
+      allow update: if (isDeveloper()
+            && validUser(request.resource.data, email)
+            // a developer cannot demote or deactivate themselves (avoids lock-out)
+            && (email != myEmail()
+                || (request.resource.data.role == 'developer' && request.resource.data.active == true)))
+        // every user may stamp their own login metadata
+        || (signedIn()
+            && email == myEmail()
+            && changedOnly(['uid', 'photoURL', 'lastLoginAt'])
+            && request.resource.data.uid == request.auth.uid);
+
+      allow delete: if isDeveloper() && email != myEmail();
+    }
+
+    // ------------------------------------------------------------------
+    // settings/app
+    // ------------------------------------------------------------------
+    match /settings/{id} {
+      allow read: if registered();
+      allow write: if isDeveloper();
+    }
+
+    // ------------------------------------------------------------------
+    // schedules/{startDate}
+    // ------------------------------------------------------------------
+    function validSchedule(s, id) {
+      return s.id == id
+        && s.startDate == id
+        && s.status in ['draft', 'published']
+        && s.nurseOrder is list
+        && s.nurses is map
+        && s.assignments is map
+        && s.locks is map
+        && s.holidays is list;
+    }
+
+    function notLeave(code) {
+      return !(code in ['AL', 'OL', 'REQ']);
+    }
+
+    // Row `n` equals row `o` everywhere except at indexes lo and hi.
+    // (Empty slices raise "index out of bound" in the rules runtime, hence the guards.)
+    function rowKept(o, n, lo, hi) {
+      return n.size() == o.size()
+        && (lo == 0 || n[0:lo] == o[0:lo])
+        && (hi <= lo + 1 || n[lo + 1:hi] == o[lo + 1:hi])
+        && (hi >= n.size() - 1 || n[hi + 1:n.size()] == o[hi + 1:o.size()]);
+    }
+
+    // `a` (after) is `b` (before) with the requester's and target's cells exchanged
+    // on the requester's day and the target's day – nothing else changed.
+    function cellsSwapped(b, a, s) {
+      let A = s.requesterId;
+      let B = s.targetId;
+      let d1 = s.requesterDay;
+      let d2 = s.targetDay;
+      let lo = d1 < d2 ? d1 : d2;
+      let hi = d1 < d2 ? d2 : d1;
+      return A != B
+        && a.diff(b).affectedKeys().hasOnly([A, B])
+        && b[A][d1] == s.requesterShift
+        && b[B][d2] == s.targetShift
+        && notLeave(b[A][d1]) && notLeave(b[B][d1])
+        && notLeave(b[A][d2]) && notLeave(b[B][d2])
+        && a[A][d1] == b[B][d1] && a[B][d1] == b[A][d1]
+        && a[A][d2] == b[B][d2] && a[B][d2] == b[A][d2]
+        && rowKept(b[A], a[A], lo, hi)
+        && rowKept(b[B], a[B], lo, hi);
+    }
+
+    // A staff nurse applying a swap they were asked to approve. Must be written in the
+    // same transaction that moves the swap request from pending_target to approved.
+    function swapApplication(sid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let swapId = after.lastSwapId;
+      let s = get(swapPath(swapId)).data;
+      return registered()
+        && before.status == 'published'
+        && after.diff(before).affectedKeys().hasOnly(['assignments', 'lastSwapId', 'updatedAt', 'updatedBy'])
+        && after.updatedBy == myEmail()
+        && s.scheduleId == sid
+        && s.targetId == myEmail()
+        && s.status == 'pending_target'
+        && getAfter(swapPath(swapId)).data.status == 'approved'
+        && cellsSwapped(before.assignments, after.assignments, s);
+    }
+
+    match /schedules/{sid} {
+      allow read: if isManager() || (registered() && resource.data.status == 'published');
+      allow create: if isManager() && validSchedule(request.resource.data, sid);
+      allow update: if (isManager() && validSchedule(request.resource.data, sid))
+        || swapApplication(sid);
+      allow delete: if isManager() && (resource.data.status == 'draft' || isDeveloper());
+    }
+
+    // ------------------------------------------------------------------
+    // swap_requests
+    // ------------------------------------------------------------------
+    function validSwapCreate(s) {
+      return s.status == 'pending_target'
+        && s.requesterId != s.targetId
+        && s.requesterShift in ['D', 'E', 'N']
+        && s.targetShift in ['D', 'E', 'N']
+        && s.requesterDay is int && s.requesterDay >= 0 && s.requesterDay < 28
+        && s.targetDay is int && s.targetDay >= 0 && s.targetDay < 28
+        && s.targetEmail is string
+        && s.warnings is list
+        && get(schedulePath(s.scheduleId)).data.status == 'published';
+    }
+
+    function headApprovalRequired() {
+      return exists(settingsPath()) && get(settingsPath()).data.requireHeadApproval == true;
+    }
+
+    function targetResponseValid(id) {
+      let next = request.resource.data.status;
+      return next == 'rejected'
+        || next == 'pending_head'
+        || (next == 'approved'
+            && !headApprovalRequired()
+            && getAfter(schedulePath(resource.data.scheduleId)).data.lastSwapId == id);
+    }
+
+    function isParticipant() {
+      return resource.data.requesterId == myEmail() || resource.data.targetId == myEmail();
+    }
+
+    match /swap_requests/{id} {
+      allow read: if isManager() || (registered() && isParticipant());
+
+      allow create: if registered()
+        && validSwapCreate(request.resource.data)
+        && (request.resource.data.requesterId == myEmail() || isManager());
+
+      allow update: if isManager()
+        // requester withdraws
+        || (registered()
+            && resource.data.requesterId == myEmail()
+            && resource.data.status in ['pending_target', 'pending_head']
+            && request.resource.data.status == 'cancelled'
+            && changedOnly(['status', 'updatedAt']))
+        // target approves / rejects / escalates to head nurse
+        || (registered()
+            && resource.data.targetId == myEmail()
+            && resource.data.status == 'pending_target'
+            && changedOnly(['status', 'warnings', 'responseNote', 'respondedAt', 'updatedAt'])
+            && targetResponseValid(id))
+        // participants record e-mail delivery status
+        || (registered() && isParticipant() && changedOnly(['emailStatus', 'updatedAt']));
+
+      allow delete: if isDeveloper();
+    }
+
+    // ------------------------------------------------------------------
+    // leave_requests
+    // ------------------------------------------------------------------
+    function validLeave(l) {
+      return l.type in ['AL', 'OL', 'REQ']
+        && l.startDate is string
+        && l.endDate is string
+        && l.startDate <= l.endDate
+        && l.status in ['pending', 'approved', 'rejected', 'cancelled'];
+    }
+
+    match /leave_requests/{id} {
+      allow read: if isManager() || (registered() && resource.data.nurseId == myEmail());
+      allow create: if validLeave(request.resource.data)
+        && (isManager()
+            || (registered()
+                && request.resource.data.nurseId == myEmail()
+                && request.resource.data.status == 'pending'));
+      allow update: if (isManager() && validLeave(request.resource.data))
+        || (registered()
+            && resource.data.nurseId == myEmail()
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'cancelled'
+            && changedOnly(['status', 'updatedAt']));
+      allow delete: if isManager();
+    }
+
+    // ------------------------------------------------------------------
+    // email_logs – delivery audit trail
+    // ------------------------------------------------------------------
+    match /email_logs/{id} {
+      allow read: if isManager() || (registered() && resource.data.sentBy == myEmail());
+      allow create: if registered()
+        && request.resource.data.sentBy == myEmail()
+        && (isManager() || request.resource.data.type in ['swap_request', 'swap_result']);
+      allow update: if registered()
+        && resource.data.sentBy == myEmail()
+        && request.resource.data.sentBy == myEmail()
+        && request.resource.data.type == resource.data.type;
+      allow delete: if isDeveloper();
+    }
+
+    // ------------------------------------------------------------------
+    // mail – queue for the Firebase "Trigger Email" extension (SMTP: AWS SES / Resend)
+    // The extension updates `delivery` with admin privileges.
+    // ------------------------------------------------------------------
+    function swapMailAllowed(m) {
+      let s = get(swapPath(m.swapId)).data;
+      return (s.requesterId == myEmail() && m.to == s.targetEmail)
+        || (s.targetId == myEmail() && m.to == s.requesterEmail);
+    }
+
+    match /mail/{id} {
+      allow read: if registered() && resource.data.createdBy == myEmail();
+      allow create: if registered()
+        && request.resource.data.createdBy == myEmail()
+        && (isManager() || swapMailAllowed(request.resource.data));
+    }
+  }
+}

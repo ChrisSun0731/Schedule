@@ -1,0 +1,24 @@
+{
+  "name": "nursing-schedule-functions",
+  "description": "Cloud Functions for the nursing scheduling system (e-mail delivery via Resend or AWS SES)",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1175.0",
+    "firebase-admin": "^14.5.1",
+    "firebase-functions": "^7.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0"
+  }
+}
