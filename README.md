@@ -155,7 +155,7 @@ VITE_USE_EMULATORS=true npm run dev                 # 終端機 2：開啟終端
 
 1. Repository → Settings → Pages → Source 選 **GitHub Actions**。
 2. Settings → Secrets and variables → Actions：
-   - **Secrets**：`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`（使用 EmailJS 時再加 `VITE_EMAILJS_*`）
+   - **Secrets**（或 **Variables**，兩者皆可）：`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`（使用 EmailJS 時再加 `VITE_EMAILJS_*`）
    - **Variables**（選用）：`VITE_EMAIL_PROVIDER`、`VITE_FIREBASE_FUNCTIONS_REGION`
 3. 推送到 `main`：Actions 會執行型別檢查、單元測試、安全規則測試，再建置並部署到 `https://<帳號>.github.io/<repo>/`。
 
