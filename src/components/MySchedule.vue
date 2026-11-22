@@ -55,7 +55,7 @@
         <ShiftPill :code="s" dense :tooltip="false" />
         <span class="tabular">{{ shiftTime(s) }}</span>
       </span>
-      <span v-if="canSwap" class="my-hint">點選上班日即可申請換班</span>
+      <span v-if="canSwap" class="my-hint">點選今天以後的上班日，即可申請換班</span>
       <q-btn
         v-if="schedule.status === 'published'"
         flat
@@ -143,7 +143,7 @@ const next = computed(() => {
 
 <style scoped lang="scss">
 .my-schedule {
-  max-width: 46rem;
+  max-width: 48rem;
   padding: 16px;
   @media (max-width: 599px) {
     padding: 12px 8px;

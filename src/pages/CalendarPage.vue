@@ -1,10 +1,10 @@
 <template>
-  <q-page class="page-pad">
-    <div class="page-head q-mb-md">
-      <h1 class="page-title q-my-none">加入行事曆</h1>
-      <q-space />
-      <q-btn flat no-caps color="primary" icon="arrow_back" label="回班表" :to="{ name: 'schedule' }" />
-    </div>
+  <q-page class="page page--narrow">
+    <PageHeader title="加入行事曆" guide="calendar">
+      <template #actions>
+        <q-btn flat no-caps color="primary" icon="arrow_back" label="回班表" :to="{ name: 'schedule' }" />
+      </template>
+    </PageHeader>
 
     <div v-if="loading" class="surface empty-state cal-box" role="status">
       <q-spinner size="32px" color="primary" />
@@ -28,7 +28,6 @@
           unelevated
           no-caps
           color="primary"
-          icon="event_available"
           :label="result ? '重新同步 Google 日曆' : '加入 Google 日曆'"
           :loading="syncing"
           :disable="!ready || !events.length || useEmulators"
@@ -40,10 +39,10 @@
           </template>
         </q-btn>
         <q-btn
-          outline
+          unelevated
           no-caps
-          color="primary"
-          icon="download"
+          color="soft"
+          text-color="ink"
           label="下載 .ics（Apple、Outlook）"
           :disable="!ready || !events.length"
           @click="downloadIcs"
@@ -87,6 +86,7 @@
 import { computed, reactive, ref, shallowRef, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { doc, getDoc } from 'firebase/firestore';
+import PageHeader from '@/components/PageHeader.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { SHIFT_META } from '@/constants/labels';
 import { buildIcs, buildShiftEvents, googleCalendarWeekUrl } from '@/services/calendarExport';
@@ -230,7 +230,6 @@ function downloadIcs(): void {
 
 <style scoped lang="scss">
 .cal-box {
-  max-width: 46rem;
   padding: 16px;
   @media (max-width: 599px) {
     padding: 12px;

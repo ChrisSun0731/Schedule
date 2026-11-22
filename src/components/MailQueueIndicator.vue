@@ -1,13 +1,13 @@
 <template>
-  <q-btn v-if="mail.stats.total" flat round dense :class="{ 'text-amber-4': mail.stats.failed }" :aria-label="summary">
+  <q-btn v-if="mail.stats.total" flat round dense :class="mail.stats.failed ? 'text-on-warn' : 'text-muted'" :aria-label="summary">
     <!-- The ring shows progress; the counts are in the accessible name, the tooltip and the menu (no 9px digits). -->
     <q-circular-progress
       v-if="mail.stats.pending"
       :value="mail.stats.progress * 100"
       size="24px"
       :thickness="0.22"
-      color="white"
-      track-color="teal-9"
+      color="primary"
+      track-color="soft"
       aria-hidden="true"
     />
     <q-icon v-else :name="mail.stats.failed ? 'mark_email_unread' : 'mark_email_read'" />
@@ -18,7 +18,7 @@
       <div class="row items-center q-px-md q-pt-sm q-pb-xs">
         <div class="text-subtitle2">郵件寄送</div>
         <q-space />
-        <q-chip dense outline color="primary" class="q-mr-none">{{ PROVIDER_LABELS[mail.provider] }}</q-chip>
+        <span class="text-caption text-muted">{{ PROVIDER_LABELS[mail.provider] }}</span>
       </div>
       <q-linear-progress :value="mail.stats.progress" :color="mail.stats.failed ? 'warning' : 'positive'" class="q-mx-md" rounded aria-hidden="true" />
       <div class="text-caption text-muted q-px-md q-pt-xs tabular" aria-live="polite">

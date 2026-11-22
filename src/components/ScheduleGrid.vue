@@ -717,8 +717,8 @@ function demandRange(values: number[]): string {
 
 .roster-scroll {
   overflow: auto;
-  max-height: calc(100vh - 220px);
-  max-height: calc(100dvh - 220px);
+  max-height: calc(100vh - var(--roster-offset, 268px));
+  max-height: calc(100dvh - var(--roster-offset, 268px));
   min-height: 320px;
   border: 1px solid var(--line);
   border-radius: 12px;

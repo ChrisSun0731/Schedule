@@ -1,5 +1,7 @@
 <template>
-  <q-page class="page-pad">
+  <q-page class="page" :class="{ 'has-ward-tabs': wards.mine.length > 1 }">
+    <PageHeader title="班表" guide="schedule" />
+
     <!-- One tab per ward for head nurses with several wards (and developers) -->
     <q-tabs
       v-if="wards.mine.length > 1"
@@ -12,19 +14,19 @@
       mobile-arrows
       active-color="primary"
       indicator-color="primary"
-      class="ward-tabs text-muted q-mb-sm"
+      class="ward-tabs text-muted q-mb-md"
       aria-label="病房"
       @update:model-value="wards.select"
     >
-      <q-tab v-for="w in wards.mine" :key="w.id" :name="w.id" icon="apartment" :label="w.name">
+      <q-tab v-for="w in wards.mine" :key="w.id" :name="w.id" :label="w.name">
         <q-badge v-if="pendingByWard.get(w.id)" color="negative" floating :aria-label="`${pendingByWard.get(w.id)} 件待審核`">
           {{ pendingByWard.get(w.id) }}
         </q-badge>
       </q-tab>
     </q-tabs>
 
-    <!-- Toolbar -->
-    <div v-if="ward" class="toolbar q-mb-sm">
+    <!-- Toolbar: which period · how to look at it · what to do with it -->
+    <div v-if="ward" class="toolbar">
       <div class="toolbar-period">
         <q-select
           :model-value="schedules.selectedId"
@@ -39,30 +41,24 @@
           :disable="!schedules.wardList.length"
           @update:model-value="schedules.select"
         >
-          <template #prepend><q-icon name="calendar_month" color="primary" /></template>
+          <template #prepend><q-icon name="calendar_month" size="20px" class="text-muted" /></template>
           <template #option="{ itemProps, opt }">
             <q-item v-bind="itemProps">
               <q-item-section>{{ opt.label }}</q-item-section>
               <q-item-section side>
-                <q-badge :color="opt.published ? 'positive' : 'muted'">{{ opt.published ? '已發布' : '草稿' }}</q-badge>
+                <span class="status" :class="opt.published ? 'status--published' : 'status--draft'">{{ opt.published ? '已發布' : '草稿' }}</span>
               </q-item-section>
             </q-item>
           </template>
         </q-select>
-        <q-chip
-          v-if="current"
-          :color="published ? 'positive' : 'muted'"
-          text-color="white"
-          :icon="published ? 'verified' : 'edit_note'"
-          class="q-ma-none no-shrink"
-        >
-          {{ published ? '已發布' : '草稿' }}
-        </q-chip>
+        <span v-if="current" class="status" :class="published ? 'status--published' : 'status--draft'">
+          <q-icon :name="published ? 'verified' : 'edit_note'" size="16px" aria-hidden="true" />{{ published ? '已發布' : '草稿' }}
+        </span>
       </div>
 
-      <div class="toolbar-actions">
+      <div v-if="current" class="toolbar-tools">
         <q-btn-toggle
-          v-if="current && myRow"
+          v-if="myRow"
           v-model="view"
           dense
           no-caps
@@ -78,39 +74,28 @@
           ]"
         />
 
-        <template v-if="current && evaluation && shownView === 'ward'">
-          <q-btn
-            dense
-            unelevated
-            no-caps
-            :color="evaluation.errorCount ? 'error-soft' : 'ok-soft'"
-            :text-color="evaluation.errorCount ? 'negative' : 'positive'"
-            :icon="evaluation.errorCount ? 'error' : 'task_alt'"
-            :label="$q.screen.gt.xs ? `錯誤 ${evaluation.errorCount}` : String(evaluation.errorCount)"
-            :aria-label="`規則錯誤 ${evaluation.errorCount} 項，開啟規則檢查`"
-            class="issue-btn"
-            @click="togglePanel"
-          />
-          <q-btn
-            dense
-            unelevated
-            no-caps
-            color="warn-soft"
-            text-color="on-warn"
-            icon="warning"
-            :label="$q.screen.gt.xs ? `警告 ${evaluation.warningCount}` : String(evaluation.warningCount)"
-            :aria-label="`警告 ${evaluation.warningCount} 項，開啟規則檢查`"
-            class="issue-btn"
-            @click="togglePanel"
-          />
-        </template>
+        <q-btn
+          v-if="evaluation && shownView === 'ward'"
+          unelevated
+          no-caps
+          class="check-btn"
+          :class="checkState.cls"
+          :icon="checkState.icon"
+          :label="checkState.label"
+          :aria-label="checkState.aria"
+          :aria-expanded="panelOpen"
+          @click="togglePanel"
+        >
+          <q-tooltip>{{ panelOpen ? '關閉規則檢查' : '列出所有違規與警告' }}</q-tooltip>
+        </q-btn>
 
-        <div v-if="manage && current && shownView === 'ward'" class="row no-wrap" role="group" aria-label="編輯紀錄">
+        <div v-if="manage && shownView === 'ward'" class="row no-wrap" role="group" aria-label="編輯紀錄">
           <q-btn
             flat
             round
             dense
             icon="undo"
+            class="text-muted"
             :disable="!history.canUndo.value || history.busy.value"
             :aria-label="history.canUndo.value ? `復原：${history.undoLabel.value}` : '復原'"
             @click="runHistory('undo')"
@@ -122,6 +107,7 @@
             round
             dense
             icon="redo"
+            class="text-muted"
             :disable="!history.canRedo.value || history.busy.value"
             :aria-label="history.canRedo.value ? `重做：${history.redoLabel.value}` : '重做'"
             @click="runHistory('redo')"
@@ -129,76 +115,68 @@
             <q-tooltip>{{ history.canRedo.value ? `重做：${history.redoLabel.value}` : '沒有可重做的變更' }}（{{ modKey }}⇧Z）</q-tooltip>
           </q-btn>
         </div>
+      </div>
 
-        <q-space />
-
-        <template v-if="manage && wide">
-          <q-btn outline no-caps color="primary" icon="add" label="新增週期" @click="dialogs.create = true" />
-          <template v-if="current">
-            <q-btn outline no-caps color="primary" icon="auto_fix_high" label="自動排班" @click="dialogs.generate = true" />
-            <q-btn outline no-caps color="primary" icon="table_view" label="匯出 Excel" @click="exportExcel" />
-          </template>
-        </template>
+      <div class="toolbar-actions">
+        <q-btn v-if="manage && current" unelevated no-caps color="soft" text-color="ink" label="自動排班" @click="dialogs.generate = true" />
+        <!-- One primary action per screen: publishing for head nurses, swapping for everyone else. -->
         <q-btn
           v-if="current && published && canRequestSwap"
-          outline
+          unelevated
           no-caps
-          color="primary"
-          icon="swap_horiz"
+          :color="manage ? 'soft' : 'primary'"
+          :text-color="manage ? 'ink' : undefined"
           label="申請換班"
           @click="openSwap(null)"
         />
-        <q-btn
-          v-if="manage && current"
-          unelevated
-          no-caps
-          color="primary"
-          :icon="published ? 'forward_to_inbox' : 'campaign'"
-          :label="published ? '重新通知' : '發布並通知'"
-          @click="dialogs.publish = true"
-        />
-        <q-btn v-if="manage" flat round dense icon="more_vert" aria-label="更多動作">
+        <q-btn v-if="manage && current" unelevated no-caps color="primary" :label="published ? '重新通知' : '發布並通知'" @click="dialogs.publish = true" />
+        <q-btn v-if="manage" flat round dense icon="more_vert" class="text-muted" aria-label="更多動作">
+          <q-tooltip>更多動作</q-tooltip>
           <q-menu anchor="bottom right" self="top right">
-            <q-list style="min-width: 220px">
-              <template v-if="!wide">
-                <q-item v-close-popup clickable @click="dialogs.create = true">
-                  <q-item-section avatar><q-icon name="add" /></q-item-section>
-                  <q-item-section>新增週期</q-item-section>
-                </q-item>
-                <template v-if="current">
-                  <q-item v-close-popup clickable @click="dialogs.generate = true">
-                    <q-item-section avatar><q-icon name="auto_fix_high" /></q-item-section>
-                    <q-item-section>自動排班</q-item-section>
-                  </q-item>
-                  <q-item v-close-popup clickable @click="exportExcel">
-                    <q-item-section avatar><q-icon name="table_view" /></q-item-section>
-                    <q-item-section>匯出 Excel</q-item-section>
-                  </q-item>
-                </template>
-                <q-separator v-if="current" />
-              </template>
+            <q-list class="action-menu">
+              <q-item v-close-popup clickable @click="dialogs.create = true">
+                <q-item-section avatar><q-icon name="add" /></q-item-section>
+                <q-item-section>
+                  <q-item-label>新增排班週期</q-item-label>
+                  <q-item-label caption>建立下一個 28 天的班表草稿</q-item-label>
+                </q-item-section>
+              </q-item>
               <template v-if="current">
+                <q-item v-close-popup clickable @click="exportExcel">
+                  <q-item-section avatar><q-icon name="table_view" /></q-item-section>
+                  <q-item-section>
+                    <q-item-label>匯出 Excel</q-item-label>
+                    <q-item-label caption>下載班表、規則檢查與圖例（.xlsx）</q-item-label>
+                  </q-item-section>
+                </q-item>
+                <q-separator />
                 <q-item v-close-popup clickable @click="syncRoster">
                   <q-item-section avatar><q-icon name="group_add" /></q-item-section>
-                  <q-item-section>同步人員名單</q-item-section>
+                  <q-item-section>
+                    <q-item-label>同步人員名單</q-item-label>
+                    <q-item-label caption>加入新指派到此病房的人員，並更新姓名與職級</q-item-label>
+                  </q-item-section>
                 </q-item>
                 <q-item v-close-popup clickable :disable="!lockCount" @click="clearLocks">
                   <q-item-section avatar><q-icon name="lock_open" /></q-item-section>
                   <q-item-section>
                     <q-item-label>清除全部鎖定</q-item-label>
-                    <q-item-label caption>{{ lockCount ? `${lockCount} 格，可復原` : '目前沒有鎖定的格子' }}</q-item-label>
+                    <q-item-label caption>{{ lockCount ? `解除 ${lockCount} 格，讓自動排班可以重排；可復原` : '目前沒有鎖定的格子' }}</q-item-label>
                   </q-item-section>
                 </q-item>
                 <q-item v-if="published" v-close-popup clickable @click="unpublish">
                   <q-item-section avatar><q-icon name="unpublished" /></q-item-section>
-                  <q-item-section>改回草稿</q-item-section>
+                  <q-item-section>
+                    <q-item-label>改回草稿</q-item-label>
+                    <q-item-label caption>護理師暫時看不到這份班表，重新發布後恢復</q-item-label>
+                  </q-item-section>
                 </q-item>
                 <q-separator />
                 <q-item v-close-popup clickable class="text-negative" :disable="!canDelete" @click="removeSchedule">
                   <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
                   <q-item-section>
                     <q-item-label>刪除班表</q-item-label>
-                    <q-item-label v-if="!canDelete" caption>已發布的班表僅系統管理員可刪除</q-item-label>
+                    <q-item-label caption>{{ canDelete ? '連同所有班別一起刪除，無法復原' : '已發布的班表僅系統管理員可刪除' }}</q-item-label>
                   </q-item-section>
                 </q-item>
               </template>
@@ -208,20 +186,21 @@
       </div>
     </div>
 
-    <!-- Filters + legend (ward view) -->
-    <div v-if="current && shownView === 'ward'" class="filters q-mb-sm">
+    <!-- Filters (ward view) -->
+    <div v-if="current && shownView === 'ward'" class="filters">
       <q-input
         v-model="search"
         dense
         outlined
         clearable
-        placeholder="搜尋姓名 / 編號"
+        placeholder="搜尋姓名或員工編號"
         aria-label="搜尋姓名或員工編號"
         class="bg-surface search"
       >
-        <template #prepend><q-icon name="search" /></template>
+        <template #prepend><q-icon name="search" size="20px" /></template>
       </q-input>
-      <div class="row items-center no-wrap q-gutter-xs" role="group" aria-label="依職級篩選">
+      <div class="level-filter" role="group" aria-labelledby="level-filter-label">
+        <span id="level-filter-label" class="filter-label">職級</span>
         <q-btn
           v-for="lv in NURSE_LEVELS"
           :key="lv"
@@ -237,15 +216,6 @@
         />
       </div>
       <q-toggle v-model="showIssues" dense color="primary" label="標示違規" />
-      <div class="legend">
-        <span v-for="c in legendCodes" :key="c" class="row items-center no-wrap">
-          <ShiftPill :code="c" dense :tooltip="false" />
-          <span class="q-ml-xs text-caption text-muted">{{ SHIFT_META[c].label }}</span>
-        </span>
-        <span v-if="manage" class="text-caption text-muted gt-sm row items-center no-wrap">
-          <span class="lock-glyph q-mr-xs" aria-hidden="true" />鎖定 · 鍵盤快捷鍵見班別選單
-        </span>
-      </div>
     </div>
 
     <!-- Content -->
@@ -259,7 +229,7 @@
       <div class="text-body2 q-mt-xs">
         {{ auth.isDeveloper ? '先建立病房並指派人員，才能開始排班。' : '請系統管理員在「人員管理」把你加入病房，加入後即可看到班表。' }}
       </div>
-      <q-btn v-if="auth.isDeveloper" unelevated no-caps color="primary" icon="apartment" label="前往病房" class="q-mt-md" :to="{ name: 'wards' }" />
+      <q-btn v-if="auth.isDeveloper" unelevated no-caps color="primary" label="前往病房" class="q-mt-md" :to="{ name: 'wards' }" />
     </div>
 
     <div v-else-if="!current" class="surface empty-state empty-box">
@@ -268,7 +238,7 @@
       <div class="text-body2 q-mt-xs">
         {{ manage ? '建立 28 天的排班週期後，即可自動排班並發布給護理師。' : '護理長發布班表後會顯示在這裡，並寄送 Email 通知你。' }}
       </div>
-      <q-btn v-if="manage" unelevated no-caps color="primary" icon="add" label="建立排班週期" class="q-mt-md" @click="dialogs.create = true" />
+      <q-btn v-if="manage" unelevated no-caps color="primary" label="新增排班週期" class="q-mt-md" @click="dialogs.create = true" />
     </div>
 
     <template v-else-if="evaluation">
@@ -282,38 +252,58 @@
         :can-swap="published && canRequestSwap"
         @swap="openSwap"
       />
-      <div v-else class="row no-wrap q-col-gutter-md">
-        <div class="col" style="min-width: 0">
-          <ScheduleGrid
-            :schedule="current"
-            :days="days"
-            :rows="rows"
-            :evaluation="evaluation"
-            :editable="manage"
-            :me-id="auth.email"
-            :show-issues="showIssues"
-            :show-summary="manage || wide"
-            :focus="focus"
-            @set-cell="setCell"
-            @set-lock="setLock"
-            @toggle-holiday="toggleHoliday"
-            @remove-row="removeRow"
-            @open-issues="openIssues"
-            @swap="openSwap"
-          />
+      <template v-else>
+        <div class="row no-wrap q-col-gutter-md">
+          <div class="col" style="min-width: 0">
+            <ScheduleGrid
+              :schedule="current"
+              :days="days"
+              :rows="rows"
+              :evaluation="evaluation"
+              :editable="manage"
+              :me-id="auth.email"
+              :show-issues="showIssues"
+              :show-summary="manage || wide"
+              :focus="focus"
+              @set-cell="setCell"
+              @set-lock="setLock"
+              @toggle-holiday="toggleHoliday"
+              @remove-row="removeRow"
+              @open-issues="openIssues"
+              @swap="openSwap"
+            />
+          </div>
+          <div v-if="panelOpen && wide" class="col-auto" style="width: 320px">
+            <ViolationPanel :evaluation="evaluation" :nurse-id="panelNurse" :nurse-name="panelNurse ? current?.nurses[panelNurse]?.name : undefined" @close="closePanel" @focus="focusOn" @clear-nurse="panelNurse = null" />
+          </div>
         </div>
-        <div v-if="panelOpen && wide" class="col-auto" style="width: 320px">
-          <ViolationPanel :evaluation="evaluation" :nurse-id="panelNurse" :nurse-name="panelNurse ? current?.nurses[panelNurse]?.name : undefined" @close="closePanel" @focus="focusOn" @clear-nurse="panelNurse = null" />
+
+        <!-- Legend: every code and mark used in the grid, so the grid explains itself. -->
+        <div class="legend-bar">
+          <ul class="legend" aria-label="班別圖例">
+            <li v-for="c in legendCodes" :key="c">
+              <ShiftPill :code="c" dense :tooltip="false" />
+              <span>{{ SHIFT_META[c].label }}</span>
+            </li>
+          </ul>
+          <ul class="legend legend-marks" aria-label="標記說明">
+            <li v-if="showIssues"><span class="mark mark-error" aria-hidden="true" />違規</li>
+            <li v-if="showIssues"><span class="mark mark-warn" aria-hidden="true" />警告</li>
+            <li v-if="manage"><span class="mark mark-lock" aria-hidden="true" />已鎖定</li>
+            <li><LevelBadge :level="seniorSample" />實心職級計入資深人力</li>
+            <li v-if="manage && !$q.screen.xs" class="text-muted">點選格子修改班別，或直接輸入代碼</li>
+            <li v-else-if="!manage && myRow && published" class="text-muted">點選自己的上班日可申請換班</li>
+          </ul>
         </div>
-      </div>
-      <div class="text-caption text-muted q-mt-xs row q-gutter-x-md">
-        <span>更新 {{ formatDateTime(current.updatedAt) }} · {{ current.updatedBy }}</span>
-        <span v-if="current.publishedAt">發布 {{ formatDateTime(current.publishedAt) }}</span>
+      </template>
+      <div class="meta tabular">
+        <span>最後更新 {{ formatDateTime(current.updatedAt) }} · {{ current.updatedBy }}</span>
+        <span v-if="current.publishedAt">發布於 {{ formatDateTime(current.publishedAt) }}</span>
       </div>
     </template>
 
     <q-dialog v-if="evaluation" :model-value="panelOpen && !wide" position="bottom" @update:model-value="(v: boolean) => (v ? (panelOpen = true) : closePanel())">
-      <div style="width: 100%; height: 70vh">
+      <div style="width: 100%; height: 75vh; height: 75dvh">
         <ViolationPanel :evaluation="evaluation" :nurse-id="panelNurse" :nurse-name="panelNurse ? current?.nurses[panelNurse]?.name : undefined" @close="closePanel" @focus="focusOn" @clear-nurse="panelNurse = null" />
       </div>
     </q-dialog>
@@ -338,8 +328,10 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { Dialog, Notify, useQuasar } from 'quasar';
 import GenerateDialog from '@/components/GenerateDialog.vue';
+import LevelBadge from '@/components/LevelBadge.vue';
 import MySchedule from '@/components/MySchedule.vue';
 import NewScheduleDialog from '@/components/NewScheduleDialog.vue';
+import PageHeader from '@/components/PageHeader.vue';
 import PublishDialog from '@/components/PublishDialog.vue';
 import ScheduleGrid from '@/components/ScheduleGrid.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
@@ -352,6 +344,7 @@ import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useLeavesStore } from '@/stores/leaves';
 import { useSchedulesStore } from '@/stores/schedules';
+import { useSettingsStore } from '@/stores/settings';
 import { useSwapsStore } from '@/stores/swaps';
 import { useUsersStore } from '@/stores/users';
 import { useWardsStore } from '@/stores/wards';
@@ -366,6 +359,7 @@ const wards = useWardsStore();
 const swaps = useSwapsStore();
 const leaves = useLeavesStore();
 const users = useUsersStore();
+const settings = useSettingsStore();
 
 const dialogs = reactive({ create: false, generate: false, publish: false, swap: false });
 const panelOpen = ref(false);
@@ -376,7 +370,7 @@ const levelFilter = ref<NurseLevel[]>([]);
 const focus = ref<{ nurseId?: string | undefined; day?: number | undefined; token: number } | null>(null);
 const swapDay = ref<number | null>(null);
 
-/** Desktop width: side panel, full toolbar, coverage summary for everyone. */
+/** Desktop width: rule-check side panel and the coverage summary for everyone. */
 const wide = computed(() => $q.screen.gt.sm);
 const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
@@ -396,6 +390,8 @@ const legendCodes = computed(() => {
   const used = new Set(Object.values(current.value?.assignments ?? {}).flat());
   return SHIFT_CODES.filter((c) => LEGEND_ALWAYS.has(c) || used.has(c));
 });
+/** A level that counts as senior, to show what a filled level badge means. */
+const seniorSample = computed<NurseLevel>(() => settings.rules.seniorLevels[0] ?? 'N3');
 
 // Staff nurses on a phone start on their own calendar; everyone can switch.
 const view = ref<'mine' | 'ward'>(!auth.isManager && $q.screen.lt.md ? 'mine' : 'ward');
@@ -413,6 +409,16 @@ const pendingByWard = computed(() => {
 });
 
 const evaluation = computed(() => (current.value ? evaluateScheduleDoc(current.value, rules.value, previous.value) : null));
+
+/** The single rule-check button: colour, icon and words all say the same thing. */
+const checkState = computed(() => {
+  const e = evaluation.value?.errorCount ?? 0;
+  const w = evaluation.value?.warningCount ?? 0;
+  const aria = `規則檢查：${e} 項錯誤、${w} 項警告`;
+  if (e) return { cls: 'check-btn--error', icon: 'error', label: `${e} 錯誤 · ${w} 警告`, aria };
+  if (w) return { cls: 'check-btn--warn', icon: 'warning', label: `0 錯誤 · ${w} 警告`, aria };
+  return { cls: 'check-btn--ok', icon: 'task_alt', label: '符合規則', aria };
+});
 
 const rows = computed<NurseSnapshot[]>(() => {
   const s = current.value;
@@ -605,81 +611,198 @@ function openSwap(day: number | null): void {
 </script>
 
 <style scoped lang="scss">
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.toolbar-period {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 18rem;
-  max-width: 28rem;
-  min-width: 0;
-  @media (max-width: 599px) {
-    max-width: none;
+// Height above the grid on wide screens, so the grid (and its coverage rows) fits the window.
+.page {
+  --roster-offset: 268px;
+  &.has-ward-tabs {
+    --roster-offset: 328px;
   }
-}
-.period-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  border-radius: 8px;
-}
-.toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  flex: 999 1 auto;
-}
-.issue-btn {
-  min-width: 3.5rem;
-}
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-.search {
-  min-width: 200px;
-  border-radius: 8px;
-  @media (max-width: 599px) {
-    flex: 1 1 100%;
-  }
-}
-.level-btn {
-  min-width: 2.5rem;
-  min-height: 2rem;
-}
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  margin-left: auto;
-  @media (max-width: 1023px) {
-    margin-left: 0;
-  }
-}
-.lock-glyph {
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 0 8px 8px 0;
-  border-color: transparent var(--text-3) transparent transparent;
-}
-.empty-box {
-  max-width: 520px;
-  margin: 40px auto;
 }
 .ward-tabs {
   border-bottom: 1px solid var(--line);
   :deep(.q-tab) {
     min-height: 44px;
   }
+}
+
+// Toolbar: three groups that wrap as the width shrinks, in this order.
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.toolbar-period {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 22rem;
+  min-width: 0;
+  @media (max-width: 599px) {
+    flex: 1 1 100%;
+  }
+}
+.period-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+.toolbar-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.action-menu {
+  min-width: 260px;
+  max-width: 320px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  &--published {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  &--draft {
+    background: var(--soft);
+    color: var(--text-2);
+  }
+}
+
+.check-btn {
+  font-weight: 600;
+  &--error {
+    background: var(--error-soft);
+    color: var(--error);
+  }
+  &--warn {
+    background: var(--warn-soft);
+    color: var(--on-warn);
+  }
+  &--ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.search {
+  flex: 0 1 16rem;
+  min-width: 12rem;
+  border-radius: var(--radius-sm);
+  @media (max-width: 599px) {
+    flex: 1 1 100%;
+  }
+}
+.level-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.filter-label {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  margin-right: 4px;
+}
+.level-btn {
+  min-width: 2.5rem;
+  min-height: 2rem;
+}
+
+.legend-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-top: 10px;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+// Samples of the marks drawn in ScheduleGrid.vue (same shapes, so the legend can be trusted).
+.mark {
+  position: relative;
+  display: inline-block;
+  width: 18px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--surface);
+}
+.mark-error {
+  box-shadow: inset 0 0 0 2px var(--error);
+  &::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--error);
+  }
+}
+.mark-warn {
+  outline: 2px dashed var(--warn);
+  outline-offset: -2px;
+}
+.mark-lock {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    border-style: solid;
+    border-width: 0 7px 7px 0;
+    border-color: transparent var(--text-3) transparent transparent;
+  }
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+.empty-box {
+  max-width: 520px;
+  margin: 40px auto;
 }
 </style>

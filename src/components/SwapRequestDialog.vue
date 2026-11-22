@@ -1,17 +1,16 @@
 <template>
-  <q-dialog :model-value="modelValue" :maximized="$q.screen.xs" @update:model-value="$emit('update:modelValue', $event)">
-    <q-card class="sheet" :style="$q.screen.xs ? undefined : 'width: 560px; max-width: 96vw'">
-      <q-card-section class="row items-center q-pb-sm">
-        <q-icon name="swap_horiz" color="primary" size="26px" class="q-mr-sm" />
-        <div class="text-h6">申請換班</div>
-        <q-space />
-        <q-chip dense outline color="muted" class="gt-xs">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
-      </q-card-section>
-
-      <q-card-section class="sheet-body q-pt-none q-gutter-y-md">
+  <AppDialog
+    :model-value="modelValue"
+    title="申請換班"
+    :meta="formatPeriod(schedule.startDate, schedule.endDate)"
+    description="選擇要交換的兩個班。系統會即時檢查交換後是否符合規則，送出後以 Email 通知對方。"
+    :width="560"
+    @update:model-value="$emit('update:modelValue', $event)"
+  >
+      <div class="q-gutter-y-md">
         <!-- 1. Requester -->
         <div class="step">
-          <div class="step-title"><span class="step-no" aria-hidden="true">1</span>{{ auth.isManager ? '申請人的班' : '我的班' }}</div>
+          <div class="step-title"><span class="step-no" aria-hidden="true">1</span>{{ auth.isManager ? '申請人要換出的班' : '我要換出的班' }}</div>
           <q-select
             v-if="auth.isManager"
             v-model="requesterId"
@@ -48,7 +47,7 @@
         <!-- 2. Target -->
         <div class="step">
           <div class="step-title row items-center">
-            <span class="step-no" aria-hidden="true">2</span>換班對象
+            <span class="step-no" aria-hidden="true">2</span>和誰交換
             <q-space />
             <q-btn-toggle
               v-model="targetMode"
@@ -100,13 +99,14 @@
               <q-chip v-else-if="manual.employeeId || manual.email" dense color="error-soft" text-color="negative" icon="person_off" class="q-ml-none">
                 此班表查無此人，請確認員工編號或 Email
               </q-chip>
+              <p v-else class="hint">輸入對方的員工編號或 Email，系統會在這份班表中找到對方。</p>
             </div>
           </div>
         </div>
 
         <!-- 3. Target shift -->
         <div class="step">
-          <div class="step-title"><span class="step-no" aria-hidden="true">3</span>對方的班</div>
+          <div class="step-title"><span class="step-no" aria-hidden="true">3</span>對方換給你的班</div>
           <q-select
             v-model="targetDay"
             outlined
@@ -129,7 +129,7 @@
           </q-select>
         </div>
 
-        <q-input v-model="note" outlined dense autogrow label="備註（選填）" maxlength="200" />
+        <q-input v-model="note" outlined dense autogrow label="備註（選填）" hint="會一併寄給對方，例如換班原因" maxlength="200" />
 
         <!-- Preview -->
         <div v-if="preview" class="preview" aria-live="polite">
@@ -157,38 +157,29 @@
           </q-banner>
           <q-banner v-else-if="check?.introduced.length" dense rounded class="bg-warn-soft text-on-warn q-mt-sm">
             <template #avatar><q-icon name="warning" /></template>
-            換班後需護理長審核
+            換班後有規則問題，對方同意後還需護理長審核
             <ul class="q-my-xs q-pl-md text-caption">
               <li v-for="(v, i) in check.introduced.slice(0, 4)" :key="i">{{ v.message }}</li>
             </ul>
           </q-banner>
           <q-banner v-else-if="check" dense rounded class="bg-ok-soft text-positive q-mt-sm">
             <template #avatar><q-icon name="task_alt" /></template>
-            符合排班規則
+            {{ needsHead ? '符合排班規則。此病房的換班在對方同意後，還需護理長核准。' : '符合排班規則，對方同意後班表立即更新。' }}
           </q-banner>
         </div>
-      </q-card-section>
+      </div>
 
-      <q-card-actions align="right" class="sheet-actions">
-        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
-        <q-btn
-          unelevated
-          no-caps
-          color="primary"
-          icon="send"
-          label="送出並通知對方"
-          :loading="busy"
-          :disable="!canSubmit"
-          @click="submit"
-        />
-      </q-card-actions>
-    </q-card>
-  </q-dialog>
+    <template #actions>
+      <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+      <q-btn unelevated no-caps color="primary" label="送出並通知對方" :loading="busy" :disable="!canSubmit" @click="submit" />
+    </template>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { Notify } from 'quasar';
+import AppDialog from '@/components/AppDialog.vue';
 import LevelBadge from '@/components/LevelBadge.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { errorMessage } from '@/services/firebase';
@@ -330,6 +321,9 @@ const preview = computed(() => {
   };
 });
 
+/** The ward asks the head nurse to approve every swap, even one that breaks no rule. */
+const needsHead = computed(() => wards.requiresHeadApproval(props.schedule.wardId));
+
 const canSubmit = computed(() => !!shape.value && !!check.value && !check.value.blocked && !!targetEmail.value);
 
 async function submit(): Promise<void> {
@@ -371,23 +365,10 @@ async function submit(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-// Full-screen on phones: the form scrolls, the actions stay put.
-.sheet {
-  display: flex;
-  flex-direction: column;
-}
-.sheet-body {
-  flex: 1 1 auto;
-  overflow-y: auto;
-}
-.sheet-actions {
-  border-top: 1px solid var(--line);
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
-}
 .step-title {
   font-weight: 600;
-  font-size: 0.8125rem;
-  color: var(--text-2);
+  font-size: 0.875rem;
+  color: var(--text);
   margin-bottom: 6px;
 }
 .step-no {
@@ -404,7 +385,7 @@ async function submit(): Promise<void> {
 }
 .preview {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   padding: 10px;
   background: var(--surface-2);
   overflow-x: auto;

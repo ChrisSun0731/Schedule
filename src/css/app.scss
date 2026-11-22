@@ -1,22 +1,28 @@
 // Global styles
+//
+// Design direction: quiet chrome, colourful data. The shift colours (D daylight → E dusk → N night)
+// are the only saturated colour in the app; headers, navigation and secondary buttons stay neutral.
+// Brand teal is kept for the one primary action on a screen, the active navigation item and focus.
 
 // ---------------------------------------------------------------------------
 // Design tokens
 //
 // Light values live on :root; dark values on body.body--dark, which Quasar toggles
 // from the OS setting (framework.config.dark = 'auto'). There is no in-app switch.
-// Contrast is checked for every pair: text ≥ 4.5:1, rings and icons ≥ 3:1.
+// Contrast (WCAG 2.x), checked for every text pair:
+//   light  text 13.6:1 on page · text-2 6.5:1 on surface, 5.5:1 on soft · primary 6.0:1 on surface
+//   dark   text 14.7:1 on page · text-2 7.9:1 on surface, 6.4:1 on soft · primary 7.7:1 on surface
 // ---------------------------------------------------------------------------
 :root {
   --page: #f4f6f8;
   --surface: #ffffff;
-  --surface-2: #f7f9fa; // table headers and footers
+  --surface-2: #f7f9fa; // table headers, guide panels
   --line: #e3e8ec;
   --line-strong: #8aa1b5; // week separators
   --text: #1f2933;
   --text-2: #52606d; // secondary text
   --text-3: #5f6b78; // ids, ranges; ≥ 4.8:1 on every surface incl. the own-row tint
-  --soft: #e9edf1; // neutral fill (unselected toggles, neutral chips)
+  --soft: #e9edf1; // neutral fill (secondary buttons, unselected toggles)
   --tint: #e6f4f3; // brand-tinted fill (own row, selected nav item)
   --on-tint: #0b4f52;
   --weekend-bg: #eef1f5;
@@ -32,11 +38,11 @@
   --pending: #8a5a00; // "waiting for someone" status fill (white text)
   --level: #3e4c59;
   --on-level: #ffffff;
-  --header-bg: #0f6e72;
-  --header-fg: #ffffff;
-  --header-pill: rgba(0, 0, 0, 0.2);
   --off-cell: #5f6b78;
   --card-shadow: 0 18px 50px rgba(16, 42, 67, 0.08);
+
+  --radius: 12px; // cards, panels, dialogs
+  --radius-sm: 8px; // controls
 
   // Shifts – background / foreground (kept in sync with SHIFT_META in src/constants/labels.ts,
   // which e-mail and Excel use). D, E, N run from daylight to dusk to night.
@@ -99,9 +105,6 @@ body.body--dark {
   --pending: #e5b55c;
   --level: #c3ccd5;
   --on-level: #121619;
-  --header-bg: #1d2327;
-  --header-fg: #e3e8ec;
-  --header-pill: rgba(255, 255, 255, 0.08);
   --off-cell: #9aa5b1;
   --card-shadow: none;
 
@@ -183,31 +186,26 @@ $semantic: (
   }
 }
 
+// ---------------------------------------------------------------------------
+// Base
+// ---------------------------------------------------------------------------
 body {
   background: var(--page);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
-}
-
-.page-pad {
-  padding: 16px;
+  // Phones read at arm's length: a step up from Quasar's 14px.
   @media (max-width: 599px) {
-    padding: 12px 8px;
+    font-size: 15px;
   }
 }
 
-.page-title {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1.4;
-  letter-spacing: 0.02em;
-}
-
-.surface {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+// iOS Safari zooms into any field whose text is under 16px; touch screens get 16px fields.
+@media (pointer: coarse) {
+  .q-field__native,
+  .q-field__input,
+  .q-select__filter {
+    font-size: 16px;
+  }
 }
 
 .tabular {
@@ -224,6 +222,93 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Page layout
+//
+//  .page            padding that follows the available width
+//  .page--narrow    reading pages (lists, forms, help): one centred column
+//  .page--wide      card grids and tables
+//  (no modifier)    the schedule grid, which uses every pixel
+// ---------------------------------------------------------------------------
+.page {
+  padding: 20px 24px 32px;
+  @media (max-width: 1023px) {
+    padding: 16px 16px 24px;
+  }
+  @media (max-width: 599px) {
+    padding: 12px 12px 24px;
+  }
+}
+.page--narrow {
+  max-width: calc(52rem + 48px);
+  margin-inline: auto;
+}
+.page--wide {
+  max-width: calc(76rem + 48px);
+  margin-inline: auto;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  @media (max-width: 599px) {
+    font-size: 1.25rem;
+  }
+}
+
+// :where() keeps these at zero specificity, so Quasar spacing classes (q-mt-md…) still apply.
+:where(.section-title) {
+  margin: 0 0 4px;
+}
+:where(.hint) {
+  margin: 0;
+}
+
+// A heading inside a page or card.
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+// One sentence that explains the control, section or list next to it.
+.hint {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+// Quasar cards and tables share the surface look.
+.q-card--bordered,
+.q-table--bordered {
+  border-color: var(--line);
+}
+.q-card {
+  border-radius: var(--radius);
+}
+
+// Empty states: what is missing, why, and the next action.
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-2);
+  .empty-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -249,20 +334,14 @@ body {
   letter-spacing: 0.02em;
 }
 
+// Segmented toggles (view, filters, levels): room around each label.
+.q-btn-toggle > .q-btn {
+  padding-inline: 12px;
+  min-height: 36px;
+}
+
 .nav-active {
   color: var(--on-tint);
   background: var(--tint);
   font-weight: 600;
-}
-
-// Empty states: one line of guidance plus an optional action.
-.empty-state {
-  padding: 32px 16px;
-  text-align: center;
-  color: var(--text-2);
-  .empty-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--text);
-  }
 }

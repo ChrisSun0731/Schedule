@@ -1,44 +1,34 @@
 <template>
-  <q-page class="page-pad">
-    <div class="page-head q-mb-md">
-      <h1 class="page-title">請假</h1>
-      <q-chip dense color="tint" text-color="on-tint" icon="low_priority" class="gt-xs">
-        優先序：法定假
-        <template v-for="t in DISCRETIONARY_LEAVE_TYPES" :key="t">
-          ›<ShiftPill :code="t" dense :tooltip="false" class="q-mx-xs" />
-        </template>
-        <q-tooltip max-width="20rem">
-          法定假（{{ STATUTORY_LEAVE_TYPES.map((t) => LEAVE_LABELS[t]).join('、') }}）核准後一律排入，人力不足時由護理長補人；其餘假別依序在人力許可時排入，同序者先申請先排。
-        </q-tooltip>
-      </q-chip>
-      <q-space />
-      <q-select
-        v-if="wards.mine.length > 1"
-        v-model="wardFilter"
-        dense
-        outlined
-        emit-value
-        map-options
-        options-dense
-        aria-label="依病房篩選"
-        :options="wardOptions"
-        class="bg-surface ward-filter"
-      >
-        <template #prepend><q-icon name="apartment" /></template>
-      </q-select>
-      <q-btn unelevated no-caps color="primary" icon="add" :label="auth.isManager ? '新增請假' : '申請請假'" :disable="!canFile" @click="openDialog" />
-      <div v-if="!canFile" class="text-caption text-muted full-width text-right">尚未分配病房，請聯絡系統管理員</div>
-    </div>
+  <q-page class="page page--narrow">
+    <PageHeader title="請假" guide="leave">
+      <template #actions>
+        <q-select
+          v-if="wards.mine.length > 1"
+          v-model="wardFilter"
+          dense
+          outlined
+          emit-value
+          map-options
+          options-dense
+          aria-label="依病房篩選"
+          :options="wardOptions"
+          class="bg-surface ward-filter"
+        />
+        <q-btn unelevated no-caps color="primary" :label="auth.isManager ? '新增請假' : '申請請假'" :disable="!canFile" @click="openDialog" />
+      </template>
+    </PageHeader>
+    <p v-if="!canFile" class="hint q-mb-md">尚未分配病房，無法請假。請聯絡系統管理員把你加入病房。</p>
 
-    <q-card flat bordered class="list-card">
+    <div class="surface list-card">
       <q-tabs v-if="auth.isManager" v-model="tab" dense no-caps align="left" active-color="primary" indicator-color="primary" class="text-muted">
-        <q-tab name="pending" icon="pending_actions" label="待審核">
+        <q-tab name="pending" label="待審核">
           <q-badge v-if="pending.length" color="negative" floating>{{ pending.length }}</q-badge>
         </q-tab>
-        <q-tab name="all" icon="list" label="全部" />
-        <q-tab name="mine" icon="person" label="我的" />
+        <q-tab name="all" label="全部" />
+        <q-tab name="mine" label="我的" />
       </q-tabs>
       <q-separator v-if="auth.isManager" />
+      <p class="hint list-hint">{{ tabHint }}</p>
 
       <q-list separator>
         <q-item v-for="l in visible" :key="l.id" class="q-py-md">
@@ -56,11 +46,11 @@
             <q-item-label v-if="l.note" caption class="text-muted">{{ l.note }}</q-item-label>
             <!-- Actions sit under the text so they never squeeze it on a phone. -->
             <div v-if="wards.canManage(l.wardId) && l.status === 'pending'" class="row q-gutter-sm q-mt-sm">
-              <q-btn flat dense no-caps color="negative" icon="close" label="駁回" :loading="busy === `${l.id}:r`" :disable="!!busy" @click="decide(l, 'rejected')" />
+              <q-btn flat dense no-caps color="negative" icon="close" label="駁回" class="q-px-sm" :loading="busy === `${l.id}:r`" :disable="!!busy" @click="decide(l, 'rejected')" />
               <q-btn unelevated dense no-caps color="positive" icon="check" label="核准" class="q-px-sm" :loading="busy === `${l.id}:a`" :disable="!!busy" @click="decide(l, 'approved')" />
             </div>
             <div v-else-if="l.status === 'pending' && l.nurseId === auth.email" class="q-mt-sm">
-              <q-btn flat dense no-caps color="muted" icon="undo" label="撤回申請" @click="cancel(l)" />
+              <q-btn flat dense no-caps color="muted" icon="undo" label="撤回申請" class="q-px-sm" @click="cancel(l)" />
             </div>
           </q-item-section>
           <q-item-section side top>
@@ -85,76 +75,79 @@
           <q-icon name="inbox" size="40px" class="text-subtle" />
           <div class="empty-title q-mt-sm">{{ emptyText }}</div>
           <q-btn
-            v-if="tab === 'mine' || !auth.isManager"
+            v-if="(tab === 'mine' || !auth.isManager) && canFile"
             unelevated
             no-caps
             color="primary"
-            icon="add"
             :label="auth.isManager ? '新增請假' : '申請請假'"
             class="q-mt-md"
             @click="openDialog"
           />
         </div>
       </q-list>
-    </q-card>
+    </div>
 
     <!-- Request dialog -->
-    <q-dialog v-model="dialog">
-      <q-card style="width: 440px; max-width: 95vw">
-        <q-card-section class="row items-center q-pb-none">
-          <q-icon name="event_busy" color="primary" size="24px" class="q-mr-sm" />
-          <div class="text-h6">{{ auth.isManager ? '新增請假' : '申請請假' }}</div>
-        </q-card-section>
-        <q-card-section class="q-gutter-md">
-          <q-select
-            v-if="auth.isManager"
-            v-model="form.nurseId"
-            aria-required="true"
-            outlined
-            dense
-            emit-value
-            map-options
-            use-input
-            :options="nurseOptions"
-            label="護理師"
-          />
-          <q-select v-model="form.type" outlined dense emit-value map-options :options="typeOptions" label="假別">
-            <template #selected-item="{ opt }">
-              <ShiftPill :code="opt.value" dense :tooltip="false" class="q-mr-sm" />{{ opt.label }}
-            </template>
-            <template #option="{ itemProps, opt }">
-              <q-item v-bind="itemProps">
-                <q-item-section avatar><ShiftPill :code="opt.value" dense :tooltip="false" /></q-item-section>
-                <q-item-section>
-                  <q-item-label>{{ opt.label }}</q-item-label>
-                  <q-item-label v-if="opt.caption" caption>{{ opt.caption }}</q-item-label>
-                </q-item-section>
-              </q-item>
-            </template>
-          </q-select>
+    <AppDialog
+      v-model="dialog"
+      :title="auth.isManager ? '新增請假' : '申請請假'"
+      :description="
+        auth.isManager
+          ? '替病房的護理師登記請假。由護理長新增的請假直接核准，下次自動排班時排入。'
+          : `選擇假別與日期後送出，由${myWardId ? ` ${wards.nameOf(myWardId)} ` : ''}護理長審核。核准的假會在自動排班時排入。`
+      "
+      :width="460"
+    >
+      <div class="q-gutter-y-md">
+        <q-select
+          v-if="auth.isManager"
+          v-model="form.nurseId"
+          aria-required="true"
+          outlined
+          dense
+          emit-value
+          map-options
+          use-input
+          :options="nurseOptions"
+          label="護理師"
+        />
+        <q-select v-model="form.type" outlined dense emit-value map-options :options="typeOptions" label="假別" :hint="typeHint">
+          <template #selected-item="{ opt }">
+            <ShiftPill :code="opt.value" dense :tooltip="false" class="q-mr-sm" />{{ opt.label }}
+          </template>
+          <template #option="{ itemProps, opt }">
+            <q-item v-bind="itemProps">
+              <q-item-section avatar><ShiftPill :code="opt.value" dense :tooltip="false" /></q-item-section>
+              <q-item-section>
+                <q-item-label>{{ opt.label }}</q-item-label>
+                <q-item-label v-if="opt.caption" caption>{{ opt.caption }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </template>
+        </q-select>
+        <div>
+          <div id="leave-dates" class="section-title">日期</div>
+          <p class="hint q-mb-sm">點選開始日與結束日；只請一天時，同一天點兩次。</p>
           <div class="row justify-center">
-            <q-date v-model="range" range mask="YYYY-MM-DD" :locale="dateLocale" minimal flat bordered />
+            <q-date v-model="range" range mask="YYYY-MM-DD" :locale="dateLocale" minimal flat bordered aria-labelledby="leave-dates" />
           </div>
-          <div class="text-center text-caption text-muted" aria-live="polite">{{ rangeLabel }}</div>
-          <q-input v-model="form.note" outlined dense autogrow label="備註（選填）" maxlength="200" />
-          <div v-if="!auth.isManager && myWardId" class="text-caption text-muted">由 {{ wards.nameOf(myWardId) }} 護理長審核</div>
-          <q-banner v-if="auth.isManager" dense rounded class="bg-tint text-on-tint">
-            <template #avatar><q-icon name="verified" /></template>
-            由護理長新增的請假直接核准
-          </q-banner>
-        </q-card-section>
-        <q-card-actions align="right">
-          <q-btn v-close-popup flat no-caps color="muted" label="取消" />
-          <q-btn unelevated no-caps color="primary" icon="send" :label="auth.isManager ? '新增' : '送出申請'" :disable="!canSubmit" :loading="saving" @click="submit" />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+          <div class="text-center text-body2 q-mt-sm" aria-live="polite">{{ rangeLabel }}</div>
+        </div>
+        <q-input v-model="form.note" outlined dense autogrow label="備註（選填）" hint="護理長審核時會看到" maxlength="200" />
+      </div>
+      <template #actions>
+        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+        <q-btn unelevated no-caps color="primary" :label="auth.isManager ? '新增' : '送出申請'" :disable="!canSubmit" :loading="saving" @click="submit" />
+      </template>
+    </AppDialog>
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import { Dialog, Notify } from 'quasar';
+import AppDialog from '@/components/AppDialog.vue';
+import PageHeader from '@/components/PageHeader.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { LEAVE_LABELS, LEAVE_STATUS_META } from '@/constants/labels';
 import { errorMessage } from '@/services/firebase';
@@ -165,7 +158,6 @@ import { useWardsStore } from '@/stores/wards';
 import {
   DISCRETIONARY_LEAVE_TYPES,
   LEAVE_TYPES,
-  STATUTORY_LEAVE_TYPES,
   isStatutoryLeave,
   type LeaveRequest,
   type LeaveType,
@@ -230,6 +222,22 @@ const rangeLabel = computed(() =>
   dates.value ? `${formatMDW(dates.value.from)} – ${formatMDW(dates.value.to)} · ${diffDays(dates.value.from, dates.value.to) + 1} 天` : '選擇日期',
 );
 const canSubmit = computed(() => !!dates.value && (auth.isManager ? !!form.nurseId : !!myWardId.value));
+
+/** What the selected leave type means for scheduling. */
+const typeHint = computed(() => {
+  const t = form.type;
+  if (isStatutoryLeave(t)) return '法定假：核准後一律排入班表，人力不足時由護理長補人。';
+  if (t === 'REQ') return '預假：指定希望休息的日子，算作休息日，在人力許可時排入。';
+  const order = DISCRETIONARY_LEAVE_TYPES.map((x) => LEAVE_LABELS[x].replace(/（.*）/, '')).join(' › ');
+  return `人力許可時排入，排入順序為 ${order}。`;
+});
+
+/** One sentence about the list under the tabs. */
+const tabHint = computed(() => {
+  if (!auth.isManager || tab.value === 'mine') return '你的請假申請與審核結果。待審核的申請可以撤回。';
+  if (tab.value === 'pending') return '等待你審核的請假。核准後會在下次自動排班時排入。';
+  return '你負責病房的所有請假紀錄。';
+});
 
 const emptyText = computed(() => {
   if (auth.isManager && tab.value === 'pending') return '沒有待審核的請假';
@@ -322,24 +330,19 @@ async function remove(l: LeaveRequest): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.page-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.page-head .q-space {
-  flex: 1 1 auto;
-}
 .ward-filter {
-  min-width: 170px;
+  min-width: 150px;
   @media (max-width: 599px) {
-    flex: 1 1 100%;
-    order: 3;
+    flex: 1 1 40%;
   }
 }
 .list-card {
-  border-radius: 12px;
-  max-width: 860px;
+  overflow: hidden;
+  :deep(.q-tab) {
+    min-height: 44px;
+  }
+}
+.list-hint {
+  padding: 12px 16px 0;
 }
 </style>

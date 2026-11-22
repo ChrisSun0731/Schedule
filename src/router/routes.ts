@@ -27,6 +27,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'leave', name: 'leave', component: () => import('@/pages/LeavePage.vue') },
       /** Landing page of the e-mail "加入 Google 日曆" button (?schedule=<id>). */
       { path: 'calendar', name: 'calendar', component: () => import('@/pages/CalendarPage.vue') },
+      /** Phones and tablets: the 「更多」 tab (management pages, help, account). */
+      { path: 'more', name: 'more', component: () => import('@/pages/MorePage.vue') },
+      /** Every function explained, for the signed-in role. */
+      { path: 'help', name: 'help', component: () => import('@/pages/HelpPage.vue') },
       {
         path: 'wards',
         name: 'wards',

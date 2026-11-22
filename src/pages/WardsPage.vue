@@ -1,21 +1,20 @@
 <template>
-  <q-page class="page-pad">
-    <div class="page-head q-mb-md">
-      <h1 class="page-title">病房</h1>
-      <q-chip v-if="wards.mine.length" dense outline color="muted" :aria-label="`共 ${wards.mine.length} 個病房`">{{ wards.mine.length }}</q-chip>
-      <q-space />
-      <q-btn v-if="auth.isDeveloper" unelevated no-caps color="primary" icon="add_business" label="新增病房" @click="createWard" />
-    </div>
+  <q-page class="page page--wide">
+    <PageHeader title="病房" guide="wards">
+      <template v-if="auth.isDeveloper" #actions>
+        <q-btn unelevated no-caps color="primary" label="新增病房" @click="createWard" />
+      </template>
+    </PageHeader>
 
     <!-- Data from before wards existed (developers only) -->
-    <q-banner v-if="auth.isDeveloper && legacyTotal" rounded class="bg-warn-soft text-on-warn q-mb-md migrate">
+    <q-banner v-if="auth.isDeveloper && legacyTotal" rounded class="bg-warn-soft text-on-warn q-mb-md">
       <template #avatar><q-icon name="move_down" /></template>
       <div class="text-weight-medium">有資料尚未歸屬病房</div>
       <div class="text-caption">
         {{ legacyParts.join(' · ') }}。歸入病房後，護理長才能看到並管理這些資料。
       </div>
       <template #action>
-        <q-btn unelevated no-caps color="primary" icon="move_down" label="歸入病房…" @click="openMigration" />
+        <q-btn unelevated no-caps color="primary" label="歸入病房…" @click="openMigration" />
       </template>
     </q-banner>
 
@@ -33,83 +32,90 @@
             : '請系統管理員在「人員管理」把你設為病房的護理長。'
         }}
       </div>
-      <q-btn v-if="auth.isDeveloper" unelevated no-caps color="primary" icon="add_business" label="建立第一個病房" class="q-mt-md" @click="createWard" />
+      <q-btn v-if="auth.isDeveloper" unelevated no-caps color="primary" label="建立第一個病房" class="q-mt-md" @click="createWard" />
     </div>
 
     <div v-else class="ward-grid">
-      <q-card v-for="c in cards" :key="c.ward.id" flat bordered class="ward-card">
-        <q-card-section class="q-pb-sm">
-          <div class="row items-center no-wrap">
-            <h2 class="ward-name ellipsis">{{ c.ward.name }}</h2>
-            <q-space />
-            <q-btn v-if="auth.isDeveloper" flat round dense icon="more_vert" :aria-label="`${c.ward.name} 更多動作`">
-              <q-menu anchor="bottom right" self="top right">
-                <q-list style="min-width: 200px">
-                  <q-item v-close-popup clickable @click="renameWard(c.ward)">
-                    <q-item-section avatar><q-icon name="edit" /></q-item-section>
-                    <q-item-section>重新命名</q-item-section>
-                  </q-item>
-                  <q-item v-close-popup clickable class="text-negative" :disable="!!c.blockDelete" @click="removeWard(c.ward)">
-                    <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
-                    <q-item-section>
-                      <q-item-label>刪除病房</q-item-label>
-                      <q-item-label v-if="c.blockDelete" caption>{{ c.blockDelete }}</q-item-label>
-                    </q-item-section>
-                  </q-item>
-                </q-list>
-              </q-menu>
-            </q-btn>
+      <article v-for="c in cards" :key="c.ward.id" class="surface ward-card" :aria-labelledby="`ward-${c.ward.id}`">
+        <header class="ward-head">
+          <div class="ward-head-text">
+            <h2 :id="`ward-${c.ward.id}`" class="ward-name ellipsis">{{ c.ward.name }}</h2>
+            <p class="hint">
+              {{ c.roster }} 位排班人員<template v-if="c.heads.length"> · 護理長 {{ c.heads.join('、') }}</template>
+            </p>
           </div>
-          <div class="text-caption text-muted">
-            {{ c.roster }} 位排班人員<template v-if="c.heads.length"> · 護理長 {{ c.heads.join('、') }}</template>
-          </div>
-        </q-card-section>
+          <q-btn v-if="auth.isDeveloper" flat round dense icon="more_vert" class="text-muted" :aria-label="`${c.ward.name} 更多動作`">
+            <q-menu anchor="bottom right" self="top right">
+              <q-list style="min-width: 220px">
+                <q-item v-close-popup clickable @click="renameWard(c.ward)">
+                  <q-item-section avatar><q-icon name="edit" /></q-item-section>
+                  <q-item-section>重新命名</q-item-section>
+                </q-item>
+                <q-item v-close-popup clickable class="text-negative" :disable="!!c.blockDelete" @click="removeWard(c.ward)">
+                  <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
+                  <q-item-section>
+                    <q-item-label>刪除病房</q-item-label>
+                    <q-item-label caption>{{ c.blockDelete || '無法復原' }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </q-menu>
+          </q-btn>
+        </header>
 
-        <q-separator inset />
+        <dl class="facts">
+          <div>
+            <dt>目前週期</dt>
+            <dd>
+              <template v-if="c.schedule">
+                <span class="tabular">{{ formatPeriod(c.schedule.startDate, c.schedule.endDate) }}</span>
+                <span class="status" :class="c.schedule.status === 'published' ? 'status--published' : 'status--draft'">
+                  {{ c.schedule.status === 'published' ? '已發布' : '草稿' }}
+                </span>
+                <span v-if="c.errors" class="text-negative"><q-icon name="error" size="16px" /> {{ c.errors }} 項錯誤</span>
+              </template>
+              <span v-else class="text-muted">尚未建立班表</span>
+            </dd>
+          </div>
+          <div v-if="c.swaps || c.leaves">
+            <dt>待審核</dt>
+            <dd class="text-on-warn text-weight-medium">
+              <template v-if="c.swaps">換班 {{ c.swaps }}</template><template v-if="c.swaps && c.leaves"> · </template><template v-if="c.leaves">請假 {{ c.leaves }}</template>
+            </dd>
+          </div>
+          <div>
+            <dt>每班人數</dt>
+            <dd class="tabular">{{ demandSummary(c.ward) }}</dd>
+          </div>
+          <div>
+            <dt>資深人力</dt>
+            <dd>每班至少 {{ c.ward.minSeniorPerShift }} 位（建議 {{ c.ward.preferredSeniorPerShift }} 位）</dd>
+          </div>
+          <div>
+            <dt>換班</dt>
+            <dd>{{ c.ward.requireHeadApproval ? '一律需護理長核准' : '符合規則即生效' }}</dd>
+          </div>
+        </dl>
 
-        <q-card-section class="q-gutter-y-sm">
-          <!-- Current period -->
-          <div class="row items-center no-wrap q-gutter-x-sm">
-            <q-icon name="calendar_month" color="primary" size="20px" />
-            <template v-if="c.schedule">
-              <span class="tabular ellipsis">{{ formatPeriod(c.schedule.startDate, c.schedule.endDate) }}</span>
-              <q-badge :color="c.schedule.status === 'published' ? 'positive' : 'muted'">{{ c.schedule.status === 'published' ? '已發布' : '草稿' }}</q-badge>
-              <span v-if="c.errors" class="row items-center no-wrap text-negative text-caption">
-                <q-icon name="error" size="16px" class="q-mr-xs" />{{ c.errors }} 項錯誤
-              </span>
-            </template>
-            <span v-else class="text-muted">尚未建立班表</span>
-          </div>
-          <!-- Waiting for this ward's head nurse -->
-          <div v-if="c.swaps || c.leaves" class="row items-center no-wrap q-gutter-x-sm text-on-warn">
-            <q-icon name="pending_actions" size="20px" />
-            <span>待審核<template v-if="c.swaps"> 換班 {{ c.swaps }}</template><template v-if="c.leaves"> 請假 {{ c.leaves }}</template></span>
-          </div>
-          <div class="row items-center no-wrap q-gutter-x-sm text-muted">
-            <q-icon name="groups" size="20px" />
-            <span class="tabular">{{ demandSummary(c.ward) }}</span>
-          </div>
-          <div class="row items-center q-gutter-xs">
-            <q-chip dense color="soft" text-color="ink" icon="workspace_premium" class="q-ml-none">N2+ ≥ {{ c.ward.minSeniorPerShift }}/班</q-chip>
-            <q-chip v-if="c.ward.requireHeadApproval" dense color="soft" text-color="ink" icon="verified_user" class="q-ml-none">換班需護理長核准</q-chip>
-          </div>
-        </q-card-section>
-
-        <q-card-actions align="right" class="q-pt-none">
-          <q-btn flat no-caps color="primary" icon="tune" label="人力設定" @click="openPolicy(c.ward)" />
-          <q-btn unelevated no-caps color="primary" icon="calendar_month" label="開啟班表" @click="openSchedule(c.ward)" />
-        </q-card-actions>
-      </q-card>
+        <footer class="ward-actions">
+          <q-btn unelevated no-caps color="soft" text-color="ink" label="人力設定" @click="openPolicy(c.ward)" />
+          <q-btn unelevated no-caps color="primary" label="開啟班表" @click="openSchedule(c.ward)" />
+        </footer>
+      </article>
     </div>
 
     <!-- Staffing & swap policy of one ward -->
-    <q-dialog v-model="policy.open">
-      <q-card style="width: 460px; max-width: 95vw">
-        <q-card-section class="row items-center q-pb-none">
-          <q-icon name="tune" color="primary" size="24px" class="q-mr-sm" />
-          <div class="text-h6 ellipsis">{{ policy.name }} 人力設定</div>
-        </q-card-section>
-        <q-card-section class="q-gutter-y-md">
+    <AppDialog
+      v-model="policy.open"
+      title="人力設定"
+      :meta="policy.name"
+      description="此病房每天每班需要的人數與資深人力下限。規則檢查與自動排班都依此計算。"
+      :width="480"
+    >
+      <div class="q-gutter-y-md">
+        <div>
+          <div class="section-title">每班需要的人數</div>
+          <p class="hint q-mb-sm">國定假日使用週末的人數。</p>
           <table class="demand-table">
             <thead>
               <tr>
@@ -125,59 +131,63 @@
                 </td>
               </tr>
               <tr>
-                <td>週末 / 國定假日</td>
+                <td>週末／國定假日</td>
                 <td v-for="s in WORK_SHIFTS" :key="s">
                   <q-input v-model.number="policy.form.weekendDemand[s]" type="number" min="0" inputmode="numeric" dense outlined :aria-label="`週末與國定假日${SHIFT_META[s].label}人數`" />
                 </td>
               </tr>
             </tbody>
           </table>
-          <div>
-            <div class="text-caption text-muted q-mb-xs">資深人力（{{ settings.rules.seniorLevels.join('、') }}）每班</div>
-            <div class="row q-col-gutter-sm">
-              <q-input v-model.number="policy.form.minSeniorPerShift" class="col-6" type="number" min="0" outlined dense label="最少" />
-              <q-input v-model.number="policy.form.preferredSeniorPerShift" class="col-6" type="number" min="0" outlined dense label="建議" />
-            </div>
+        </div>
+        <div>
+          <div class="section-title">資深人力</div>
+          <p class="hint q-mb-sm">每班需要的 {{ settings.rules.seniorLevels.join('、') }} 人數。少於「最少」為錯誤，少於「建議」為警告。</p>
+          <div class="row q-col-gutter-sm">
+            <q-input v-model.number="policy.form.minSeniorPerShift" class="col-6" type="number" min="0" inputmode="numeric" outlined dense label="最少" />
+            <q-input v-model.number="policy.form.preferredSeniorPerShift" class="col-6" type="number" min="0" inputmode="numeric" outlined dense label="建議" />
           </div>
-          <q-toggle v-model="policy.form.requireHeadApproval" color="primary" label="換班一律需護理長核准" />
-          <div class="text-caption text-muted">勞基法規則、班別時間與國定假日由系統管理員統一設定，所有病房共用。</div>
-        </q-card-section>
-        <q-card-actions align="right">
-          <span v-if="policyError" class="text-caption text-negative q-mr-auto q-pl-sm">{{ policyError }}</span>
-          <q-btn v-close-popup flat no-caps color="muted" label="取消" />
-          <q-btn unelevated no-caps color="primary" icon="save" label="儲存" :loading="policy.saving" :disable="!!policyError" @click="savePolicy" />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+        </div>
+        <q-item tag="label" class="q-px-none">
+          <q-item-section avatar><q-toggle v-model="policy.form.requireHeadApproval" color="primary" /></q-item-section>
+          <q-item-section>
+            <q-item-label>換班一律需護理長核准</q-item-label>
+            <q-item-label caption>關閉時，對方同意且符合規則的換班會立即生效</q-item-label>
+          </q-item-section>
+        </q-item>
+        <p class="hint">勞基法規則、班別時間與國定假日由系統管理員在「系統設定」統一設定，所有病房共用。</p>
+      </div>
+      <template #actions>
+        <span v-if="policyError" class="text-caption text-negative q-mr-auto">{{ policyError }}</span>
+        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+        <q-btn unelevated no-caps color="primary" label="儲存" :loading="policy.saving" :disable="!!policyError" @click="savePolicy" />
+      </template>
+    </AppDialog>
 
     <!-- Migration of pre-ward data -->
-    <q-dialog v-model="migration.open">
-      <q-card style="width: 440px; max-width: 95vw">
-        <q-card-section class="row items-center q-pb-none">
-          <q-icon name="move_down" color="primary" size="24px" class="q-mr-sm" />
-          <div class="text-h6">歸入病房</div>
-        </q-card-section>
-        <q-card-section class="q-gutter-y-md">
-          <p class="q-mb-none">{{ legacyParts.join('、') }}將歸入：</p>
-          <q-select v-model="migration.target" outlined dense emit-value map-options :options="migrationOptions" label="病房" />
-          <q-input v-if="migration.target === NEW_WARD" v-model="migration.name" outlined dense label="新病房名稱" :rules="[(v: string) => !!v.trim() || '必填']" />
-          <div class="text-caption text-muted">班表會以新的編號重新建立，原有換班申請會一併指向新班表。系統管理員不會被歸入病房。</div>
-        </q-card-section>
-        <q-card-actions align="right">
-          <q-btn v-close-popup flat no-caps color="muted" label="取消" />
-          <q-btn
-            unelevated
-            no-caps
-            color="primary"
-            icon="move_down"
-            label="歸入"
-            :loading="migration.busy"
-            :disable="!migration.target || (migration.target === NEW_WARD && !migration.name.trim())"
-            @click="runMigration"
-          />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+    <AppDialog
+      v-model="migration.open"
+      title="歸入病房"
+      description="把建立病房之前的資料移到一個病房。班表會以新的編號重新建立，原有換班申請會一併指向新班表。系統管理員不會被歸入病房。"
+      :width="460"
+    >
+      <div class="q-gutter-y-md">
+        <p class="q-mb-none">{{ legacyParts.join('、') }}將歸入：</p>
+        <q-select v-model="migration.target" outlined dense emit-value map-options :options="migrationOptions" label="病房" />
+        <q-input v-if="migration.target === NEW_WARD" v-model="migration.name" outlined dense label="新病房名稱" :rules="[(v: string) => !!v.trim() || '請輸入病房名稱']" />
+      </div>
+      <template #actions>
+        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+        <q-btn
+          unelevated
+          no-caps
+          color="primary"
+          label="歸入"
+          :loading="migration.busy"
+          :disable="!migration.target || (migration.target === NEW_WARD && !migration.name.trim())"
+          @click="runMigration"
+        />
+      </template>
+    </AppDialog>
   </q-page>
 </template>
 
@@ -185,6 +195,8 @@
 import { computed, reactive } from 'vue';
 import { Dialog, Notify } from 'quasar';
 import { useRouter } from 'vue-router';
+import AppDialog from '@/components/AppDialog.vue';
+import PageHeader from '@/components/PageHeader.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { SHIFT_META } from '@/constants/labels';
 import { errorMessage } from '@/services/firebase';
@@ -398,36 +410,76 @@ async function runMigration(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.page-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
 .ward-grid {
   display: grid;
   // min() keeps a single column from overflowing a 320px-wide phone.
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: 16px;
-  max-width: 1200px;
 }
 .ward-card {
-  border-radius: 12px;
   display: flex;
   flex-direction: column;
-  .q-card__actions {
-    margin-top: auto;
-  }
+  padding: 16px 16px 12px;
+}
+.ward-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ward-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .ward-name {
   margin: 0;
   font-size: 1.0625rem;
   font-weight: 700;
   line-height: 1.4;
-  min-width: 0;
+  letter-spacing: normal;
 }
-.migrate {
-  max-width: 1200px;
+.facts {
+  margin: 0 0 12px;
+  font-size: 0.875rem;
+  div {
+    display: flex;
+    gap: 12px;
+    padding: 6px 0;
+    border-top: 1px solid var(--line);
+  }
+  dt {
+    flex: 0 0 4.5em;
+    color: var(--text-2);
+  }
+  dd {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+  }
+}
+.status {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  &--published {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  &--draft {
+    background: var(--soft);
+    color: var(--text-2);
+  }
+}
+.ward-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
 }
 .empty-box {
   max-width: 520px;

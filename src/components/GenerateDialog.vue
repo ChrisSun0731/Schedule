@@ -1,124 +1,126 @@
 <template>
-  <q-dialog :model-value="modelValue" :persistent="running" @update:model-value="close">
-    <q-card style="width: 560px; max-width: 95vw">
-      <q-card-section class="row items-center q-pb-sm">
-        <q-icon name="auto_fix_high" color="primary" size="24px" class="q-mr-sm" />
-        <div class="text-h6">自動排班</div>
+  <AppDialog
+    :model-value="modelValue"
+    :persistent="running"
+    title="自動排班"
+    :meta="formatPeriod(schedule.startDate, schedule.endDate)"
+    description="依人力需求、職級與勞基法規則填滿班表，並排入已核准的請假。結果會先預覽，按「套用至班表」才會寫入，套用後仍可復原。"
+    :width="560"
+    @update:model-value="close"
+  >
+    <!-- Options -->
+    <template v-if="!running && !result">
+      <q-list>
+        <q-item tag="label" class="q-px-none">
+          <q-item-section avatar><q-toggle v-model="keepLocks" color="primary" /></q-item-section>
+          <q-item-section>
+            <q-item-label>保留鎖定的格子</q-item-label>
+            <q-item-label caption>{{ lockCount ? `手動修改過的 ${lockCount} 格維持不變` : '目前沒有鎖定的格子' }}</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item tag="label" class="q-px-none">
+          <q-item-section avatar><q-toggle v-model="applyLeave" color="primary" /></q-item-section>
+          <q-item-section>
+            <q-item-label>套用已核准請假</q-item-label>
+            <q-item-label caption>{{ leaveRequests.length }} 筆。法定假一律排入，其他依 年休 › 公假 › 補休 › 事假 › 預假 排入</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item v-if="hasHistory" class="q-px-none">
+          <q-item-section avatar><q-icon name="link" class="text-muted q-ml-sm" /></q-item-section>
+          <q-item-section>
+            <q-item-label>銜接上一期</q-item-label>
+            <q-item-label caption>連續上班與輪班間隔會連同上一期最後 7 天一起計算</q-item-label>
+          </q-item-section>
+        </q-item>
+      </q-list>
+
+      <div id="gen-quality" class="section-title q-mt-md">運算時間</div>
+      <p class="hint q-mb-sm">時間越長，通常越能減少違規。</p>
+      <q-btn-toggle
+        v-model="quality"
+        spread
+        no-caps
+        unelevated
+        toggle-color="primary"
+        color="soft"
+        text-color="ink"
+        aria-labelledby="gen-quality"
+        :options="[
+          { label: '快速 2 秒', value: 'fast' },
+          { label: '標準 6 秒', value: 'normal' },
+          { label: '精細 15 秒', value: 'thorough' },
+        ]"
+      />
+
+      <div class="section-title q-mt-md">使用的規則</div>
+      <p class="hint">{{ ruleChips.join(' · ') }}</p>
+    </template>
+
+    <!-- Running -->
+    <div v-if="running" class="q-py-lg">
+      <q-linear-progress :value="progress" color="primary" size="10px" rounded class="q-mb-sm" aria-label="自動排班進度" />
+      <div class="row text-caption text-muted tabular" aria-live="polite">
+        <span>{{ Math.round(progress * 100) }}%</span>
         <q-space />
-        <q-chip dense outline color="muted" class="gt-xs">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
-      </q-card-section>
+        <span>已嘗試 {{ iterations.toLocaleString() }} 種排法</span>
+      </div>
+    </div>
 
-      <!-- Options -->
-      <q-card-section v-if="!running && !result" class="q-pt-none">
+    <!-- Result -->
+    <template v-if="result">
+      <p class="result-line tabular" aria-live="polite">
+        <span v-for="(part, i) in resultParts" :key="part.text" class="result-part" :class="part.cls">
+          <span v-if="i" class="sep" aria-hidden="true">·</span>
+          <q-icon :name="part.icon" size="18px" />
+          {{ part.text }}
+        </span>
+      </p>
+      <p class="hint q-mt-xs">這是預覽，班表尚未改變。不滿意可以「重新產生」。</p>
+
+      <q-list v-if="result.evaluation.errorCount" dense bordered class="rounded-borders q-mt-md">
+        <q-item v-for="(v, i) in result.evaluation.violations.filter((x) => x.severity === 'error').slice(0, 5)" :key="i">
+          <q-item-section avatar style="min-width: 28px"><q-icon name="error" color="negative" size="16px" /></q-item-section>
+          <q-item-section class="text-body2">{{ v.message }}</q-item-section>
+        </q-item>
+      </q-list>
+
+      <q-expansion-item
+        v-if="bumped.length"
+        dense
+        icon="event_busy"
+        :label="`未排入的請假 ${bumped.length} 天`"
+        caption="人力不足的日子，優先序較低的請假會被略過"
+        header-class="text-on-warn q-px-none"
+        class="q-mt-sm"
+      >
         <q-list dense>
-          <q-item tag="label" class="q-px-none">
-            <q-item-section avatar><q-toggle v-model="keepLocks" color="primary" /></q-item-section>
+          <q-item v-for="(b, i) in bumped" :key="i" class="q-px-none">
+            <q-item-section avatar style="min-width: 44px"><ShiftPill :code="b.type" dense /></q-item-section>
             <q-item-section>
-              <q-item-label>保留鎖定的格子</q-item-label>
-              <q-item-label caption>{{ lockCount }} 格</q-item-label>
-            </q-item-section>
-          </q-item>
-          <q-item tag="label" class="q-px-none">
-            <q-item-section avatar><q-toggle v-model="applyLeave" color="primary" /></q-item-section>
-            <q-item-section>
-              <q-item-label>套用已核准請假</q-item-label>
-              <q-item-label caption>{{ leaveRequests.length }} 筆 · 優先序 年休 &gt; 公假 &gt; 預假</q-item-label>
-            </q-item-section>
-          </q-item>
-          <q-item v-if="hasHistory" class="q-px-none">
-            <q-item-section avatar><q-icon name="link" color="primary" class="q-ml-sm" /></q-item-section>
-            <q-item-section>
-              <q-item-label>銜接上一期</q-item-label>
-              <q-item-label caption>連續上班 / 班距計入上期最後 7 天</q-item-label>
+              <q-item-label>{{ b.nurseName }} · {{ formatMDW(b.date) }}</q-item-label>
+              <q-item-label caption>{{ b.reason }}</q-item-label>
             </q-item-section>
           </q-item>
         </q-list>
+      </q-expansion-item>
+    </template>
 
-        <div id="gen-quality" class="text-caption text-muted q-mt-md q-mb-xs">運算時間</div>
-        <q-btn-toggle
-          v-model="quality"
-          spread
-          no-caps
-          unelevated
-          toggle-color="primary"
-          color="soft"
-          text-color="ink"
-          aria-labelledby="gen-quality"
-          :options="[
-            { label: '快速 2 秒', value: 'fast' },
-            { label: '標準 6 秒', value: 'normal' },
-            { label: '精細 15 秒', value: 'thorough' },
-          ]"
-        />
-
-        <div class="row q-gutter-xs q-mt-md">
-          <q-chip v-for="r in ruleChips" :key="r" dense color="tint" text-color="on-tint" class="q-ml-none">{{ r }}</q-chip>
-        </div>
-      </q-card-section>
-
-      <!-- Running -->
-      <q-card-section v-if="running" class="q-py-lg">
-        <q-linear-progress :value="progress" color="primary" size="10px" rounded class="q-mb-sm" aria-label="自動排班進度" />
-        <div class="row text-caption text-muted tabular" aria-live="polite">
-          <span>{{ Math.round(progress * 100) }}%</span>
-          <q-space />
-          <span>{{ iterations.toLocaleString() }} 次嘗試</span>
-        </div>
-      </q-card-section>
-
-      <!-- Result -->
-      <q-card-section v-if="result" class="q-pt-none">
-        <p class="result-line tabular" aria-live="polite">
-          <span v-for="(part, i) in resultParts" :key="part.text" class="result-part" :class="part.cls">
-            <span v-if="i" class="sep" aria-hidden="true">·</span>
-            <q-icon :name="part.icon" size="18px" />
-            {{ part.text }}
-          </span>
-        </p>
-
-        <q-list v-if="result.evaluation.errorCount" dense bordered class="rounded-borders q-mt-md">
-          <q-item v-for="(v, i) in result.evaluation.violations.filter((x) => x.severity === 'error').slice(0, 5)" :key="i">
-            <q-item-section avatar style="min-width: 28px"><q-icon name="error" color="negative" size="16px" /></q-item-section>
-            <q-item-section class="text-body2">{{ v.message }}</q-item-section>
-          </q-item>
-        </q-list>
-
-        <q-expansion-item
-          v-if="bumped.length"
-          dense
-          icon="event_busy"
-          :label="`未排入的請假 ${bumped.length} 天`"
-          header-class="text-on-warn q-px-none"
-          class="q-mt-sm"
-        >
-          <q-list dense>
-            <q-item v-for="(b, i) in bumped" :key="i" class="q-px-none">
-              <q-item-section avatar style="min-width: 44px"><ShiftPill :code="b.type" dense /></q-item-section>
-              <q-item-section>
-                <q-item-label>{{ b.nurseName }} · {{ formatMDW(b.date) }}</q-item-label>
-                <q-item-label caption>{{ b.reason }}</q-item-label>
-              </q-item-section>
-            </q-item>
-          </q-list>
-        </q-expansion-item>
-      </q-card-section>
-
-      <q-card-actions align="right">
-        <q-btn v-if="running" flat no-caps color="muted" label="停止" @click="cancel" />
-        <template v-else>
-          <q-btn flat no-caps color="muted" label="取消" @click="close(false)" />
-          <q-btn v-if="result" flat no-caps color="primary" icon="refresh" label="重新產生" @click="run" />
-          <q-btn v-if="result" unelevated no-caps color="primary" icon="done" label="套用至班表" :loading="applying" @click="apply" />
-          <q-btn v-else unelevated no-caps color="primary" icon="play_arrow" label="開始排班" @click="run" />
-        </template>
-      </q-card-actions>
-    </q-card>
-  </q-dialog>
+    <template #actions>
+      <q-btn v-if="running" flat no-caps color="muted" label="停止" @click="cancel" />
+      <template v-else>
+        <q-btn flat no-caps color="muted" label="取消" @click="close(false)" />
+        <q-btn v-if="result" unelevated no-caps color="soft" text-color="ink" label="重新產生" @click="run" />
+        <q-btn v-if="result" unelevated no-caps color="primary" label="套用至班表" :loading="applying" @click="apply" />
+        <q-btn v-else unelevated no-caps color="primary" label="開始排班" @click="run" />
+      </template>
+    </template>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Notify } from 'quasar';
+import AppDialog from '@/components/AppDialog.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { errorMessage } from '@/services/firebase';
 import { solveInWorker, type SolverJob } from '@/services/solverClient';
@@ -180,12 +182,12 @@ const ruleChips = computed(() => {
   return [
     `平日 D${r.weekdayDemand.D} E${r.weekdayDemand.E} N${r.weekdayDemand.N}`,
     `假日 D${r.weekendDemand.D} E${r.weekendDemand.E} N${r.weekendDemand.N}`,
-    `N2+ ≥ ${r.minSeniorPerShift}/班`,
-    `連上 ≤ ${r.maxConsecutiveWork}`,
-    `連休 ≤ ${r.maxConsecutiveOff}`,
+    `資深人力 ≥ ${r.minSeniorPerShift}/班`,
+    `連續上班 ≤ ${r.maxConsecutiveWork} 天`,
+    `連續休假 ≤ ${r.maxConsecutiveOff} 天`,
     `例假 ≥ ${r.minOffPerWeek}/週`,
     `休假 ≥ ${r.minOffPerPeriod}/4週`,
-    ...(r.minRestHours ? [`班距 ≥ ${r.minRestHours}h`] : []),
+    ...(r.minRestHours ? [`輪班間隔 ≥ ${r.minRestHours} 小時`] : []),
   ];
 });
 

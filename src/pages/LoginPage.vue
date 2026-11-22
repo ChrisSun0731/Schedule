@@ -8,7 +8,7 @@
               <q-icon name="medical_services" size="34px" />
             </div>
             <h1 class="login-title">護理排班系統</h1>
-            <div class="text-body2 text-muted q-mt-xs">班表 · 換班 · 請假</div>
+            <p class="text-body2 text-muted q-mt-xs q-mb-none">安排 28 天輪班，線上換班與請假</p>
           </q-card-section>
 
           <!-- Firebase not configured -->
@@ -34,13 +34,23 @@
             </div>
             <q-chip outline color="muted" icon="mail" class="q-mt-sm">{{ auth.email }}</q-chip>
             <div class="text-body2 text-muted q-mt-sm">
-              {{ auth.status === 'inactive' ? '此帳號已被停用，請聯絡系統管理員重新啟用。' : '請聯絡系統管理員，以此 Email 為你建立帳號。' }}
+              {{ auth.status === 'inactive' ? '此帳號已被停用，請聯絡系統管理員重新啟用。' : '請聯絡系統管理員，在「人員管理」以此 Email 為你建立帳號。' }}
             </div>
-            <q-btn class="q-mt-md full-width" outline no-caps color="primary" icon="switch_account" label="切換帳號" @click="switchAccount" />
+            <q-btn class="q-mt-md full-width" unelevated no-caps color="soft" text-color="ink" label="切換帳號" @click="switchAccount" />
           </q-card-section>
 
           <!-- Sign in -->
           <q-card-section v-else class="q-px-lg q-pb-lg">
+            <!-- What the system is for, before asking anyone to sign in. -->
+            <ul class="features">
+              <li v-for="f in features" :key="f.title">
+                <q-icon :name="f.icon" size="22px" class="text-muted" aria-hidden="true" />
+                <div>
+                  <div class="feature-title">{{ f.title }}</div>
+                  <div class="feature-text">{{ f.text }}</div>
+                </div>
+              </li>
+            </ul>
             <q-btn
               unelevated
               no-caps
@@ -56,6 +66,7 @@
               </svg>
               使用 Google 帳號登入
             </q-btn>
+            <p class="hint text-center q-mt-sm">請使用已登記的 Google 帳號。沒有帳號時，請聯絡系統管理員。</p>
 
             <q-banner v-if="auth.error" dense rounded class="bg-error-soft text-negative q-mt-md" role="alert">
               <template #avatar><q-icon name="error_outline" /></template>
@@ -110,6 +121,12 @@ const route = useRoute();
 const busy = ref(false);
 const emuEmail = ref('');
 
+const features = [
+  { icon: 'calendar_month', title: '班表', text: '隨時查看自己的班與下一班時間，並加入 Google 日曆。' },
+  { icon: 'swap_horiz', title: '換班', text: '直接向同事提出，系統自動檢查是否符合排班規則。' },
+  { icon: 'event_busy', title: '請假', text: '線上申請，護理長核准後自動排入班表。' },
+];
+
 const testAccounts = [
   { label: '系統管理員', email: 'admin@example.com' },
   { label: '護理長（5A、ICU）', email: 'head@example.com' },
@@ -155,7 +172,7 @@ async function switchAccount(): Promise<void> {
   background: var(--page);
 }
 .login-card {
-  width: 380px;
+  width: 400px;
   max-width: 100%;
   border-radius: 16px;
   border: 1px solid var(--line);
@@ -192,6 +209,26 @@ body.body--dark .google-btn {
   background: #131314;
   color: #e3e3e3;
   border-color: #8e918f;
+}
+.features {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  li {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+}
+.feature-title {
+  font-weight: 600;
+}
+.feature-text {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-2);
 }
 .emu-box {
   border: 1px dashed var(--warn);

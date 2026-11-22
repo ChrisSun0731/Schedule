@@ -13,4 +13,5 @@ $negative: #c0392b;
 $info: #1f66c1;
 $warning: #b45309;
 
-$typography-font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', 'Heiti TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+// System UI type: San Francisco / Segoe UI for Latin and digits, the platform's CJK face for Chinese.
+$typography-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', 'Heiti TC', Roboto, sans-serif;

@@ -215,7 +215,7 @@ async function run(s: SwapRequest, key: ActionKey): Promise<void> {
 
 <style scoped lang="scss">
 .swap-card {
-  border-radius: 12px;
+  border-radius: var(--radius);
   &.highlight {
     box-shadow: 0 0 0 2px var(--focus);
   }

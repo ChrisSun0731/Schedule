@@ -26,6 +26,7 @@
         <template #warning><q-icon name="warning" size="16px" class="q-mr-xs" />警告 {{ counts.warning }}</template>
         <template #info><q-icon name="info" size="16px" class="q-mr-xs" />提示 {{ counts.info }}</template>
       </q-btn-toggle>
+      <p class="hint q-mt-sm">{{ SEVERITY_HINT[severity] }}</p>
       <div v-if="nurseId || ruleCounts.length" class="row q-gutter-xs q-mt-xs">
         <q-chip
           v-if="nurseId"
@@ -92,6 +93,12 @@ defineEmits<{ close: []; focus: [v: Violation]; 'clear-nurse': [] }>();
 const ICON: Record<Severity, string> = { error: 'error', warning: 'warning', info: 'info' };
 const COLOR: Record<Severity, string> = { error: 'negative', warning: 'warning', info: 'info' };
 const SEVERITY_LABEL: Record<Severity, string> = { error: '錯誤', warning: '警告', info: '提示' };
+/** What each kind of finding means for the person deciding whether to publish. */
+const SEVERITY_HINT: Record<Severity, string> = {
+  error: '違反勞基法或人力下限，發布前應修正。點選任一項會跳到班表中的位置。',
+  warning: '可以發布，但建議調整，例如人力多於需求或資深人力低於建議。',
+  info: '僅供參考，例如休息日多於規定、工時可能不足。',
+};
 
 const scoped = computed(() =>
   props.nurseId ? props.evaluation.violations.filter((v) => v.nurseId === props.nurseId) : props.evaluation.violations,
@@ -129,16 +136,19 @@ const filtered = computed(() => ofSeverity.value.filter((v) => !ruleFilter.value
 
 <style scoped lang="scss">
 .violation-panel {
-  border-radius: 12px;
+  border-radius: var(--radius);
   height: 100%;
-  max-height: calc(100vh - 220px);
-  max-height: calc(100dvh - 220px);
   min-height: 320px;
+  // Beside the grid on wide screens; in the phone bottom sheet it fills the sheet.
+  @media (min-width: 1024px) {
+    max-height: calc(100vh - var(--roster-offset, 268px));
+    max-height: calc(100dvh - var(--roster-offset, 268px));
+  }
 }
 .panel-title {
   margin: 0;
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 0.9375rem;
+  font-weight: 600;
   line-height: 1.4;
   letter-spacing: normal;
 }

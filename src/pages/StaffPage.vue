@@ -1,9 +1,29 @@
 <template>
-  <q-page class="page-pad">
-    <div class="page-head q-mb-md">
-      <h1 class="page-title">人員管理</h1>
-      <q-chip dense outline color="muted" :aria-label="`共 ${users.list.length} 位`">{{ users.list.length }}</q-chip>
-      <q-space />
+  <q-page class="page page--wide">
+    <PageHeader title="人員管理" guide="staff">
+      <template #actions>
+        <q-btn unelevated no-caps color="primary" label="新增人員" @click="openEditor(null)" />
+        <q-btn flat round dense icon="more_vert" class="text-muted" aria-label="更多動作">
+          <q-tooltip>更多動作</q-tooltip>
+          <q-menu anchor="bottom right" self="top right">
+            <q-list style="min-width: 260px; max-width: 320px">
+              <q-item v-close-popup clickable :disable="importing" @click="importDemo">
+                <q-item-section avatar><q-icon name="group_add" /></q-item-section>
+                <q-item-section>
+                  <q-item-label>載入示範人員</q-item-label>
+                  <q-item-label caption>建立兩個示範病房與一批虛構人員，方便試用</q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-menu>
+        </q-btn>
+      </template>
+    </PageHeader>
+
+    <div class="filters">
+      <q-input v-model="search" dense outlined clearable placeholder="搜尋姓名、Email 或員工編號" aria-label="搜尋人員" class="bg-surface search">
+        <template #prepend><q-icon name="search" size="20px" /></template>
+      </q-input>
       <q-select
         v-if="wards.list.length"
         v-model="wardFilter"
@@ -15,33 +35,27 @@
         aria-label="依病房篩選"
         :options="wardFilterOptions"
         class="bg-surface ward-filter"
-      >
-        <template #prepend><q-icon name="apartment" /></template>
-      </q-select>
-      <q-input v-model="search" dense outlined clearable placeholder="搜尋姓名、Email、編號" aria-label="搜尋人員" class="bg-surface search">
-        <template #prepend><q-icon name="search" /></template>
-      </q-input>
-      <q-btn outline no-caps color="primary" icon="group_add" label="載入示範人員" :loading="importing" @click="importDemo" />
-      <q-btn unelevated no-caps color="primary" icon="person_add" label="新增人員" @click="openEditor(null)" />
+      />
+      <span class="hint tabular">共 {{ filtered.length }} 位<template v-if="filtered.length !== users.list.length">（全部 {{ users.list.length }} 位）</template></span>
     </div>
 
-    <!-- Phones get one card per person instead of a nine-column table. -->
+    <!-- Below 1024px: one card per person instead of a ten-column table. -->
     <q-table
       flat
       bordered
-      :grid="$q.screen.xs"
+      :grid="$q.screen.lt.md"
       :rows="filtered"
       :columns="columns"
       row-key="id"
       :pagination="{ rowsPerPage: 50 }"
       :rows-per-page-options="[25, 50, 100, 0]"
       rows-per-page-label="每頁"
-      no-data-label="尚無人員，按「新增人員」或「載入示範人員」開始"
+      :no-data-label="users.list.length ? '沒有符合搜尋條件的人員' : '尚無人員。按「新增人員」，或從「更多動作」載入示範人員。'"
       class="staff-table"
     >
       <template #item="props">
-        <div class="col-12 q-pa-xs">
-          <q-card flat bordered class="person-card">
+        <div class="col-12 col-sm-6 q-pa-xs">
+          <q-card flat bordered class="person-card full-height">
             <q-card-section class="row items-center no-wrap q-pb-sm">
               <q-avatar size="36px" color="tint" text-color="on-tint" class="q-mr-sm">
                 <img v-if="props.row.photoURL" :src="props.row.photoURL" alt="" referrerpolicy="no-referrer" />
@@ -63,11 +77,12 @@
               />
             </q-card-section>
             <q-card-section class="row items-center q-gutter-xs q-pt-none">
-              <q-chip dense :color="ROLE_COLOR[props.row.role as UserRole]" text-color="white" class="q-ml-none">{{ ROLE_LABELS[props.row.role as UserRole] }}</q-chip>
-              <q-chip v-for="w in wardNames(props.row)" :key="w" dense outline color="muted" icon="apartment" class="q-ml-none">{{ w }}</q-chip>
+              <span class="tag">{{ ROLE_LABELS[props.row.role as UserRole] }}</span>
+              <span v-for="w in wardNames(props.row)" :key="w" class="tag tag--outline">{{ w }}</span>
+              <span v-if="props.row.role === 'nurse' && !wardNames(props.row).length" class="tag text-negative">未分配病房</span>
               <LevelBadge :level="props.row.level" />
               <ShiftPill v-for="sh in props.row.allowedShifts" :key="sh" :code="sh" dense />
-              <q-badge :color="props.row.active ? 'positive' : 'muted'">{{ props.row.active ? '啟用' : '停用' }}</q-badge>
+              <span v-if="!props.row.active" class="tag">已停用</span>
               <span v-if="!props.row.schedulable" class="text-caption text-muted">不排班</span>
             </q-card-section>
           </q-card>
@@ -89,13 +104,13 @@
       </template>
       <template #body-cell-role="props">
         <q-td :props="props">
-          <q-chip dense :color="ROLE_COLOR[props.row.role as UserRole]" text-color="white" class="q-ma-none">{{ ROLE_LABELS[props.row.role as UserRole] }}</q-chip>
+          <span class="tag">{{ ROLE_LABELS[props.row.role as UserRole] }}</span>
         </q-td>
       </template>
       <template #body-cell-wards="props">
         <q-td :props="props">
           <div class="row q-gutter-xs">
-            <q-chip v-for="w in wardNames(props.row)" :key="w" dense outline color="muted" class="q-ma-none">{{ w }}</q-chip>
+            <span v-for="w in wardNames(props.row)" :key="w" class="tag tag--outline">{{ w }}</span>
             <span v-if="!wardNames(props.row).length" class="text-caption" :class="props.row.role === 'nurse' ? 'text-negative' : 'text-muted'">
               {{ props.row.role === 'developer' ? '全部' : '未分配' }}
             </span>
@@ -120,7 +135,7 @@
       </template>
       <template #body-cell-active="props">
         <q-td :props="props">
-          <q-badge :color="props.value ? 'positive' : 'muted'">{{ props.value ? '啟用' : '停用' }}</q-badge>
+          <span :class="props.value ? 'text-positive' : 'text-muted'">{{ props.value ? '啟用' : '停用' }}</span>
         </q-td>
       </template>
       <template #body-cell-actions="props">
@@ -143,94 +158,125 @@
     </q-table>
 
     <!-- Editor -->
-    <q-dialog v-model="editor.open">
-      <q-card style="width: 480px; max-width: 95vw">
-        <q-card-section class="row items-center q-pb-none">
-          <q-icon :name="editor.isNew ? 'person_add' : 'manage_accounts'" color="primary" size="24px" class="q-mr-sm" />
-          <div class="text-h6">{{ editor.isNew ? '新增人員' : '編輯人員' }}</div>
-        </q-card-section>
-        <q-form @submit.prevent="save">
-          <q-card-section class="q-gutter-sm">
-            <q-input
-              v-model="editor.form.email"
-              outlined
-              dense
-              type="email"
-              label="Google 帳號 Email"
-              :disable="!editor.isNew"
-              :rules="[(v: string) => /.+@.+\..+/.test(v) || 'Email 格式錯誤', (v: string) => !editor.isNew || !users.byId.has(v.trim().toLowerCase()) || '此 Email 已存在']"
-            />
-            <div class="row q-col-gutter-sm">
-              <q-input v-model="editor.form.displayName" class="col-7" outlined dense label="姓名" :rules="[(v: string) => !!v.trim() || '必填']" />
-              <q-input v-model="editor.form.employeeId" class="col-5" outlined dense label="員工編號" />
-            </div>
-            <q-select
-              v-model="editor.form.role"
-              outlined
-              dense
-              emit-value
-              map-options
-              :options="USER_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }))"
-              label="角色"
-              :disable="isSelf"
-            />
-            <q-select
-              v-if="editor.form.role !== 'developer'"
-              v-model="wardModel"
-              outlined
-              dense
-              emit-value
-              map-options
-              :multiple="editor.form.role === 'head_nurse'"
-              :use-chips="editor.form.role === 'head_nurse'"
-              :clearable="editor.form.role === 'nurse'"
-              :options="wards.list.map((w) => ({ value: w.id, label: w.name }))"
-              :label="editor.form.role === 'head_nurse' ? '負責病房（可複選）' : '所屬病房'"
-              :hint="wardHint"
-              :disable="!wards.list.length"
-            />
-            <div v-else class="text-caption text-muted">系統管理員可管理所有病房。</div>
-            <div>
-              <div id="staff-level" class="text-caption text-muted q-mb-xs">職級</div>
-              <q-btn-toggle
-                v-model="editor.form.level"
-                spread
-                unelevated
-                toggle-color="primary"
-                color="soft"
-                text-color="ink"
-                aria-labelledby="staff-level"
-                :options="NURSE_LEVELS.map((l) => ({ value: l, label: l }))"
-              />
-            </div>
-            <div>
-              <div id="staff-shifts" class="text-caption text-muted q-mb-xs">可排班別</div>
-              <div class="row q-gutter-sm" role="group" aria-labelledby="staff-shifts">
-                <q-checkbox v-for="s in WORK_SHIFTS" :key="s" v-model="editor.form.allowedShifts" :val="s" :label="`${s} ${SHIFT_META[s].label}`" />
-              </div>
-            </div>
-            <q-toggle v-model="editor.form.schedulable" label="排入班表" color="primary" />
-            <q-toggle v-model="editor.form.active" label="帳號啟用" color="positive" :disable="isSelf" />
-          </q-card-section>
-          <q-card-actions align="right">
-            <span v-if="!editor.form.allowedShifts.length" class="text-caption text-negative q-mr-auto q-pl-sm">至少勾選一個可排班別</span>
-            <q-btn v-close-popup flat no-caps color="muted" label="取消" />
-            <q-btn type="submit" unelevated no-caps color="primary" icon="save" label="儲存" :loading="saving" :disable="!editor.form.allowedShifts.length" />
-          </q-card-actions>
-        </q-form>
-      </q-card>
-    </q-dialog>
+    <AppDialog
+      v-model="editor.open"
+      form
+      :title="editor.isNew ? '新增人員' : '編輯人員'"
+      :description="editor.isNew ? '輸入對方登入用的 Google 帳號。只有名單上的帳號可以登入本系統。' : editor.form.email"
+      :width="500"
+      @submit="save"
+    >
+      <div class="q-gutter-y-sm">
+        <q-input
+          v-if="editor.isNew"
+          v-model="editor.form.email"
+          outlined
+          dense
+          type="email"
+          label="Google 帳號 Email"
+          placeholder="name@example.com"
+          :rules="[(v: string) => /.+@.+\..+/.test(v) || '請輸入完整的 Email，例如 name@example.com', (v: string) => !users.byId.has(v.trim().toLowerCase()) || '此 Email 已在名單中']"
+        />
+        <div class="row q-col-gutter-sm">
+          <q-input v-model="editor.form.displayName" class="col-7" outlined dense label="姓名" :rules="[(v: string) => !!v.trim() || '請輸入姓名']" />
+          <q-input v-model="editor.form.employeeId" class="col-5" outlined dense label="員工編號" />
+        </div>
+        <q-select
+          v-model="editor.form.role"
+          outlined
+          dense
+          emit-value
+          map-options
+          :options="USER_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r], caption: ROLE_HINT[r] }))"
+          label="角色"
+          :hint="isSelf ? '無法變更自己的角色' : ROLE_HINT[editor.form.role]"
+          :disable="isSelf"
+        >
+          <template #option="{ itemProps, opt }">
+            <q-item v-bind="itemProps">
+              <q-item-section>
+                <q-item-label>{{ opt.label }}</q-item-label>
+                <q-item-label caption>{{ opt.caption }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </template>
+        </q-select>
+        <q-select
+          v-if="editor.form.role !== 'developer'"
+          v-model="wardModel"
+          outlined
+          dense
+          emit-value
+          map-options
+          :multiple="editor.form.role === 'head_nurse'"
+          :use-chips="editor.form.role === 'head_nurse'"
+          :clearable="editor.form.role === 'nurse'"
+          :options="wards.list.map((w) => ({ value: w.id, label: w.name }))"
+          :label="editor.form.role === 'head_nurse' ? '負責病房（可複選）' : '所屬病房'"
+          :hint="wardHint"
+          :disable="!wards.list.length"
+          class="q-pt-sm"
+        />
+        <p v-else class="hint q-pt-sm">系統管理員可管理所有病房，不需指定病房。</p>
+
+        <div class="q-pt-md">
+          <div id="staff-level" class="section-title">職級</div>
+          <p class="hint q-mb-sm">{{ settings.rules.seniorLevels.join('、') }} 計入每班的資深人力。</p>
+          <q-btn-toggle
+            v-model="editor.form.level"
+            spread
+            unelevated
+            toggle-color="primary"
+            color="soft"
+            text-color="ink"
+            aria-labelledby="staff-level"
+            :options="NURSE_LEVELS.map((l) => ({ value: l, label: l }))"
+          />
+        </div>
+        <div class="q-pt-md">
+          <div id="staff-shifts" class="section-title">可排班別</div>
+          <p class="hint">自動排班只會排勾選的班別。</p>
+          <div class="row q-gutter-sm" role="group" aria-labelledby="staff-shifts">
+            <q-checkbox v-for="s in WORK_SHIFTS" :key="s" v-model="editor.form.allowedShifts" :val="s" :label="`${s} ${SHIFT_META[s].label}`" />
+          </div>
+          <p v-if="!editor.form.allowedShifts.length" class="text-caption text-negative q-mb-none">至少勾選一個班別</p>
+        </div>
+        <q-list class="q-pt-sm">
+          <q-item tag="label" class="q-px-none">
+            <q-item-section avatar><q-toggle v-model="editor.form.schedulable" color="primary" /></q-item-section>
+            <q-item-section>
+              <q-item-label>排入班表</q-item-label>
+              <q-item-label caption>開啟後會出現在病房的新班表中；不需排班的護理長可以關閉</q-item-label>
+            </q-item-section>
+          </q-item>
+          <q-item tag="label" class="q-px-none" :disable="isSelf">
+            <q-item-section avatar><q-toggle v-model="editor.form.active" color="primary" :disable="isSelf" /></q-item-section>
+            <q-item-section>
+              <q-item-label>帳號啟用</q-item-label>
+              <q-item-label caption>{{ isSelf ? '無法停用自己的帳號' : '關閉後無法登入，既有班表不受影響' }}</q-item-label>
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </div>
+      <template #actions>
+        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+        <q-btn type="submit" unelevated no-caps color="primary" label="儲存" :loading="saving" :disable="!editor.form.allowedShifts.length" />
+      </template>
+    </AppDialog>
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import { Dialog, Notify, type QTableColumn } from 'quasar';
+import AppDialog from '@/components/AppDialog.vue';
 import LevelBadge from '@/components/LevelBadge.vue';
+import PageHeader from '@/components/PageHeader.vue';
 import ShiftPill from '@/components/ShiftPill.vue';
 import { ROLE_LABELS, SHIFT_META } from '@/constants/labels';
 import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import { useUsersStore } from '@/stores/users';
 import { useWardsStore } from '@/stores/wards';
 import { NURSE_LEVELS, USER_ROLES, WORK_SHIFTS, type UserProfile, type UserRole } from '@/types/schedule';
@@ -240,8 +286,14 @@ const auth = useAuthStore();
 const users = useUsersStore();
 const wards = useWardsStore();
 
-// Role chips carry white text at ≥ 6:1 (teal is kept for the brand, not for a role).
-const ROLE_COLOR: Record<UserRole, string> = { developer: 'deep-purple-8', head_nurse: 'secondary', nurse: 'muted' };
+const settings = useSettingsStore();
+
+/** What each role may do, shown where the role is chosen. */
+const ROLE_HINT: Record<UserRole, string> = {
+  nurse: '查看班表、申請換班與請假',
+  head_nurse: '管理負責病房的班表，審核換班與請假',
+  developer: '管理所有病房、人員與系統設定',
+};
 
 const search = ref<string | null>('');
 const importing = ref(false);
@@ -368,31 +420,46 @@ async function importDemo(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.page-head {
+.filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-}
-.ward-filter {
-  min-width: 170px;
-  @media (max-width: 599px) {
-    flex: 1 1 100%;
-    order: 4;
-  }
+  gap: 8px 12px;
+  margin-bottom: 12px;
 }
 .search {
-  width: 220px;
+  flex: 0 1 18rem;
+  min-width: 12rem;
   @media (max-width: 599px) {
-    width: auto;
     flex: 1 1 100%;
-    order: 5;
+  }
+}
+.ward-filter {
+  min-width: 160px;
+  @media (max-width: 599px) {
+    flex: 1 1 auto;
   }
 }
 .staff-table {
-  border-radius: 12px;
+  border-radius: var(--radius);
 }
 .person-card {
-  border-radius: 12px;
+  border-radius: var(--radius);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  &--outline {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--text-2);
+  }
 }
 </style>

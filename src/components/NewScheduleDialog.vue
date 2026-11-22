@@ -1,68 +1,57 @@
 <template>
-  <q-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)">
-    <q-card style="width: 440px; max-width: 94vw">
-      <q-card-section class="row items-center q-pb-none">
-        <q-icon name="add_circle" color="primary" size="24px" class="q-mr-sm" />
-        <div class="col" style="min-width: 0">
-          <div class="text-h6">新增排班週期</div>
-          <div class="text-caption text-muted ellipsis">{{ ward.name }}</div>
+  <AppDialog
+    :model-value="modelValue"
+    title="新增排班週期"
+    :meta="ward.name"
+    description="建立 28 天的班表草稿，並帶入目前的排班人員與國定假日。草稿只有護理長看得到，發布後護理師才會收到。"
+    :width="460"
+    @update:model-value="$emit('update:modelValue', $event)"
+  >
+    <div class="q-gutter-y-md">
+      <q-input v-model="start" outlined dense label="開始日期" mask="####-##-##" hint="建議從週一開始，四週剛好對齊週次" :rules="[validDate]" lazy-rules>
+        <template #append>
+          <q-btn flat round dense icon="calendar_month" aria-label="從月曆選擇開始日期">
+            <q-popup-proxy cover>
+              <q-date v-model="start" mask="YYYY-MM-DD" :locale="dateLocale" minimal>
+                <div class="row justify-end"><q-btn v-close-popup flat no-caps label="完成" color="primary" /></div>
+              </q-date>
+            </q-popup-proxy>
+          </q-btn>
+        </template>
+      </q-input>
+
+      <dl class="facts tabular">
+        <div>
+          <dt>期間</dt>
+          <dd>{{ start ? formatPeriod(start) : '—' }}<span v-if="start && dayOfWeek(start) !== 1" class="text-on-warn">（不是週一）</span></dd>
         </div>
-      </q-card-section>
-
-      <q-card-section class="q-gutter-md">
-        <q-input v-model="start" outlined dense label="開始日期" mask="####-##-##" :rules="[validDate]" lazy-rules>
-          <template #prepend><q-icon name="event" /></template>
-          <template #append>
-            <q-btn flat round dense icon="calendar_month" aria-label="從月曆選擇開始日期">
-              <q-popup-proxy cover>
-                <q-date v-model="start" mask="YYYY-MM-DD" :locale="dateLocale" minimal>
-                  <div class="row justify-end"><q-btn v-close-popup flat no-caps label="完成" color="primary" /></div>
-                </q-date>
-              </q-popup-proxy>
-            </q-btn>
-          </template>
-        </q-input>
-
-        <div class="row items-center q-gutter-sm">
-          <q-chip icon="date_range" color="soft" text-color="ink" class="q-ml-none">{{ start ? formatPeriod(start) : '—' }}</q-chip>
-          <q-chip v-if="start && dayOfWeek(start) !== 1" icon="info" color="warn-soft" text-color="on-warn" dense>
-            建議以週一開始
-          </q-chip>
+        <div>
+          <dt>排班人員</dt>
+          <dd>{{ roster.length }} 位</dd>
         </div>
-
-        <p class="summary tabular">
-          {{ roster.length }} 位排班人員 · {{ holidaysInRange.length }} 個國定假日
-        </p>
-        <div v-if="holidaysInRange.length" class="row q-gutter-xs">
-          <q-chip v-for="h in holidaysInRange" :key="h" dense color="soft" text-color="ink" icon="celebration" class="q-ml-none">{{ formatMDW(h) }}</q-chip>
+        <div>
+          <dt>國定假日</dt>
+          <dd>{{ holidaysInRange.length ? holidaysInRange.map((h) => formatMDW(h)).join('、') : '無' }}</dd>
         </div>
+      </dl>
 
-        <q-banner v-if="exists" dense rounded class="bg-error-soft text-negative">{{ ward.name }}此日期的班表已存在，請選擇其他開始日期</q-banner>
-        <q-banner v-else-if="!roster.length" dense rounded class="bg-warn-soft text-on-warn">
-          {{ ward.name }}尚無可排班人員，請先在「人員管理」把護理師加入此病房並勾選「排入班表」
-        </q-banner>
-      </q-card-section>
+      <q-banner v-if="exists" dense rounded class="bg-error-soft text-negative">{{ ward.name }}此日期的班表已存在，請選擇其他開始日期。</q-banner>
+      <q-banner v-else-if="!roster.length" dense rounded class="bg-warn-soft text-on-warn">
+        {{ ward.name }}尚無可排班人員。請先在「人員管理」把護理師加入此病房，並開啟「排入班表」。
+      </q-banner>
+    </div>
 
-      <q-card-actions align="right">
-        <q-btn v-close-popup flat no-caps label="取消" color="muted" />
-        <q-btn
-          unelevated
-          no-caps
-          color="primary"
-          icon="add"
-          label="建立草稿"
-          :loading="busy"
-          :disable="!canCreate"
-          @click="create"
-        />
-      </q-card-actions>
-    </q-card>
-  </q-dialog>
+    <template #actions>
+      <q-btn v-close-popup flat no-caps label="取消" color="muted" />
+      <q-btn unelevated no-caps color="primary" label="建立草稿" :loading="busy" :disable="!canCreate" @click="create" />
+    </template>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Notify } from 'quasar';
+import AppDialog from '@/components/AppDialog.vue';
 import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useSchedulesStore } from '@/stores/schedules';
@@ -117,9 +106,24 @@ async function create(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.summary {
+.facts {
   margin: 0;
-  font-size: 0.9375rem;
-  font-weight: 500;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.875rem;
+  div {
+    display: flex;
+    gap: 12px;
+    padding: 3px 0;
+  }
+  dt {
+    flex: 0 0 4.5em;
+    color: var(--text-2);
+  }
+  dd {
+    margin: 0;
+    font-weight: 500;
+  }
 }
 </style>
