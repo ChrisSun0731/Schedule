@@ -65,7 +65,8 @@ const nurses: NurseSnapshot[] = createDemoNurses().slice(0, 3).map((u) => ({
 }));
 const week: ShiftCode[] = ['D', 'D', 'E', 'E', 'N', 'OFF', 'OFF'];
 const schedule: Schedule = {
-  id: '2026-12-07',
+  id: 'w1_2026-12-07',
+  wardId: 'w1',
   startDate: '2026-12-07',
   endDate: '2027-01-03',
   status: 'published',
@@ -90,9 +91,13 @@ describe('e-mail templates', () => {
       startDate: schedule.startDate,
       endDate: schedule.endDate,
       portalUrl: 'https://example.github.io/Schedule/',
+      scheduleId: schedule.id,
     });
     expect(mail.subject).toBe('【5A 病房】2026/12/07 – 2027/01/03 個人班表');
     expect(mail.html).toContain('https://example.github.io/Schedule/#/swaps');
+    expect(mail.html).toContain('https://example.github.io/Schedule/#/calendar?schedule=w1_2026-12-07');
+    expect(mail.html).toContain('加入 Google 日曆');
+    expect(mail.text).toContain('加入 Google 日曆：https://example.github.io/Schedule/#/calendar?schedule=w1_2026-12-07');
     expect(mail.text).toContain('上班 20 天、休假 8 天');
     expect(mail.text).toContain('12/07（一）  D 白班');
     expect(mail.text.split('\n').filter((l) => /^\d\d\/\d\d（/.test(l))).toHaveLength(28);

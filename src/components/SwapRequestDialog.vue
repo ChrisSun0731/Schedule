@@ -1,17 +1,17 @@
 <template>
-  <q-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)">
-    <q-card style="width: 560px; max-width: 96vw">
+  <q-dialog :model-value="modelValue" :maximized="$q.screen.xs" @update:model-value="$emit('update:modelValue', $event)">
+    <q-card class="sheet" :style="$q.screen.xs ? undefined : 'width: 560px; max-width: 96vw'">
       <q-card-section class="row items-center q-pb-sm">
         <q-icon name="swap_horiz" color="primary" size="26px" class="q-mr-sm" />
         <div class="text-h6">申請換班</div>
         <q-space />
-        <q-chip dense outline color="grey-8">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
+        <q-chip dense outline color="muted" class="gt-xs">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
       </q-card-section>
 
-      <q-card-section class="q-pt-none q-gutter-y-md">
+      <q-card-section class="sheet-body q-pt-none q-gutter-y-md">
         <!-- 1. Requester -->
         <div class="step">
-          <div class="step-title"><span class="step-no">1</span>我的班</div>
+          <div class="step-title"><span class="step-no" aria-hidden="true">1</span>{{ auth.isManager ? '申請人的班' : '我的班' }}</div>
           <q-select
             v-if="auth.isManager"
             v-model="requesterId"
@@ -48,7 +48,7 @@
         <!-- 2. Target -->
         <div class="step">
           <div class="step-title row items-center">
-            <span class="step-no">2</span>換班對象
+            <span class="step-no" aria-hidden="true">2</span>換班對象
             <q-space />
             <q-btn-toggle
               v-model="targetMode"
@@ -57,8 +57,9 @@
               unelevated
               size="sm"
               toggle-color="primary"
-              color="grey-2"
-              text-color="grey-8"
+              color="soft"
+              text-color="ink"
+              aria-label="指定方式"
               :options="[
                 { label: '選擇', value: 'select', icon: 'list' },
                 { label: '手動輸入', value: 'manual', icon: 'edit' },
@@ -93,11 +94,11 @@
             <q-input v-model="manual.employeeId" class="col-12 col-sm-3" outlined dense label="員工編號" />
             <q-input v-model="manual.email" class="col-12 col-sm-5" outlined dense type="email" label="Email" />
             <div class="col-12">
-              <q-chip v-if="target" dense color="teal-1" text-color="teal-10" icon="how_to_reg" class="q-ml-none">
+              <q-chip v-if="target" dense color="tint" text-color="on-tint" icon="how_to_reg" class="q-ml-none">
                 {{ target.name }} · {{ target.employeeId }} · {{ target.level }}
               </q-chip>
-              <q-chip v-else-if="manual.employeeId || manual.email" dense color="red-1" text-color="negative" icon="person_off" class="q-ml-none">
-                此班表查無此人
+              <q-chip v-else-if="manual.employeeId || manual.email" dense color="error-soft" text-color="negative" icon="person_off" class="q-ml-none">
+                此班表查無此人，請確認員工編號或 Email
               </q-chip>
             </div>
           </div>
@@ -105,7 +106,7 @@
 
         <!-- 3. Target shift -->
         <div class="step">
-          <div class="step-title"><span class="step-no">3</span>對方的班</div>
+          <div class="step-title"><span class="step-no" aria-hidden="true">3</span>對方的班</div>
           <q-select
             v-model="targetDay"
             outlined
@@ -131,7 +132,7 @@
         <q-input v-model="note" outlined dense autogrow label="備註（選填）" maxlength="200" />
 
         <!-- Preview -->
-        <div v-if="preview" class="preview">
+        <div v-if="preview" class="preview" aria-live="polite">
           <table class="preview-table">
             <thead>
               <tr>
@@ -144,32 +145,32 @@
                 <td class="text-weight-medium ellipsis">{{ r.name }}</td>
                 <td v-for="(c, i) in r.cells" :key="i">
                   <ShiftPill :code="c[0]" dense />
-                  <q-icon name="arrow_forward" size="12px" color="grey-6" class="q-mx-xs" />
+                  <q-icon name="arrow_forward" size="12px" class="q-mx-xs text-subtle" />
                   <ShiftPill :code="c[1]" dense />
                 </td>
               </tr>
             </tbody>
           </table>
-          <q-banner v-if="check?.blocked" dense rounded class="bg-red-1 text-negative q-mt-sm">
+          <q-banner v-if="check?.blocked" dense rounded class="bg-error-soft text-negative q-mt-sm">
             <template #avatar><q-icon name="block" /></template>
             {{ check.blocked }}
           </q-banner>
-          <q-banner v-else-if="check?.introduced.length" dense rounded class="bg-orange-1 text-orange-10 q-mt-sm">
+          <q-banner v-else-if="check?.introduced.length" dense rounded class="bg-warn-soft text-on-warn q-mt-sm">
             <template #avatar><q-icon name="warning" /></template>
             換班後需護理長審核
             <ul class="q-my-xs q-pl-md text-caption">
               <li v-for="(v, i) in check.introduced.slice(0, 4)" :key="i">{{ v.message }}</li>
             </ul>
           </q-banner>
-          <q-banner v-else-if="check" dense rounded class="bg-green-1 text-positive q-mt-sm">
+          <q-banner v-else-if="check" dense rounded class="bg-ok-soft text-positive q-mt-sm">
             <template #avatar><q-icon name="task_alt" /></template>
             符合排班規則
           </q-banner>
         </div>
       </q-card-section>
 
-      <q-card-actions align="right">
-        <q-btn v-close-popup flat no-caps color="grey-8" label="取消" />
+      <q-card-actions align="right" class="sheet-actions">
+        <q-btn v-close-popup flat no-caps color="muted" label="取消" />
         <q-btn
           unelevated
           no-caps
@@ -193,8 +194,8 @@ import ShiftPill from '@/components/ShiftPill.vue';
 import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useSchedulesStore } from '@/stores/schedules';
-import { useSettingsStore } from '@/stores/settings';
 import { useSwapsStore } from '@/stores/swaps';
+import { useWardsStore } from '@/stores/wards';
 import { isWorkShift, type NurseLevel, type NurseSnapshot, type Schedule, type ShiftCode } from '@/types/schedule';
 import { addDays, formatMDW, formatPeriod, todayISO } from '@/utils/dates';
 import { checkSwap } from '@/utils/scheduleHelpers';
@@ -204,7 +205,7 @@ const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
 
 const auth = useAuthStore();
 const schedules = useSchedulesStore();
-const settings = useSettingsStore();
+const wards = useWardsStore();
 const swaps = useSwapsStore();
 
 const requesterId = ref<string | null>(null);
@@ -304,7 +305,7 @@ const shape = computed(() => {
 
 const check = computed(() => {
   if (!shape.value) return null;
-  const result = checkSwap(props.schedule, shape.value, settings.rules, schedules.previousOf(props.schedule));
+  const result = checkSwap(props.schedule, shape.value, wards.rulesFor(props.schedule.wardId), schedules.previousOf(props.schedule));
   if (!result.blocked) {
     const s = shape.value;
     const unchanged = [...new Set([s.requesterDay, s.targetDay])].every(
@@ -370,43 +371,57 @@ async function submit(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
+// Full-screen on phones: the form scrolls, the actions stay put.
+.sheet {
+  display: flex;
+  flex-direction: column;
+}
+.sheet-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+.sheet-actions {
+  border-top: 1px solid var(--line);
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
 .step-title {
   font-weight: 600;
-  font-size: 13px;
-  color: #3e4c59;
+  font-size: 0.8125rem;
+  color: var(--text-2);
   margin-bottom: 6px;
 }
 .step-no {
   display: inline-flex;
-  width: 18px;
-  height: 18px;
+  width: 1.125rem;
+  height: 1.125rem;
   border-radius: 50%;
-  background: #0f6e72;
-  color: #fff;
-  font-size: 11px;
+  background: var(--focus);
+  color: var(--surface);
+  font-size: 0.6875rem;
   align-items: center;
   justify-content: center;
   margin-right: 6px;
 }
 .preview {
-  border: 1px solid #e3e8ec;
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px;
-  background: #fafbfc;
+  background: var(--surface-2);
+  overflow-x: auto;
 }
 .preview-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.8125rem;
   th {
     font-weight: 600;
-    color: #52606d;
+    color: var(--text-2);
     text-align: left;
     padding: 4px;
   }
   td {
     padding: 4px;
-    max-width: 120px;
+    max-width: 7.5rem;
   }
 }
 </style>

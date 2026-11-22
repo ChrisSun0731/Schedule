@@ -3,11 +3,13 @@ rules_version = '2';
 // Nursing shift scheduling – Firestore security rules
 //
 // Roles (users/{email}.role):
-//   developer   全部權限：人員/角色管理、系統設定、排班、發布、郵件、匯出
-//   head_nurse  排班、編輯任一格、發布並通知、審核換班/請假、寄送通知
-//   nurse       檢視已發布班表、提出/回覆換班、申請請假
+//   developer   全部權限：病房/人員/角色管理、系統設定、所有病房的排班與審核
+//   head_nurse  僅限 users/{email}.wardIds 所列的病房：排班、編輯、發布並通知、
+//               審核換班/請假、調整該病房的人力需求
+//   nurse       檢視已發布班表、提出/回覆換班、為自己的病房申請請假
 //
 // User documents are keyed by the lower-case Google account e-mail.
+// Schedules, swap requests and leave requests carry the `wardId` they belong to.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -57,6 +59,15 @@ service cloud.firestore {
       return hasRole(['developer', 'head_nurse']);
     }
 
+    function myWardIds() {
+      return profile().get('wardIds', []);
+    }
+
+    // Developers manage every ward; a head nurse only the wards listed in their profile.
+    function managesWard(w) {
+      return isDeveloper() || (hasRole(['head_nurse']) && w in myWardIds());
+    }
+
     function changedOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -69,8 +80,8 @@ service cloud.firestore {
       return /databases/$(database)/documents/swap_requests/$(id);
     }
 
-    function settingsPath() {
-      return /databases/$(database)/documents/settings/app;
+    function wardPath(id) {
+      return /databases/$(database)/documents/wards/$(id);
     }
 
     // ------------------------------------------------------------------
@@ -80,6 +91,8 @@ service cloud.firestore {
       return u.id == email
         && u.email == email
         && u.role in ['developer', 'head_nurse', 'nurse']
+        && u.get('wardIds', []) is list
+        && u.get('wardIds', []).size() <= 50
         && u.level in ['N0', 'N1', 'N2', 'N3']
         && u.displayName is string && u.displayName.size() > 0
         && u.employeeId is string
@@ -123,11 +136,43 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // schedules/{startDate}
+    // wards/{wardId} – 病房單位 and their staffing rules
+    // ------------------------------------------------------------------
+    function validDemand(d) {
+      return d is map && d.D is number && d.E is number && d.N is number
+        && d.D >= 0 && d.E >= 0 && d.N >= 0;
+    }
+
+    function validWard(w, id) {
+      return w.id == id
+        && w.name is string && w.name.size() > 0 && w.name.size() <= 40
+        && validDemand(w.weekdayDemand)
+        && validDemand(w.weekendDemand)
+        && w.minSeniorPerShift is number && w.minSeniorPerShift >= 0
+        && w.preferredSeniorPerShift is number && w.preferredSeniorPerShift >= 0
+        && w.requireHeadApproval is bool;
+    }
+
+    match /wards/{wid} {
+      allow read: if registered();
+      allow create: if isDeveloper() && validWard(request.resource.data, wid);
+      allow delete: if isDeveloper();
+      // Head nurses tune staffing and the swap policy of their own wards; renaming is for developers.
+      allow update: if validWard(request.resource.data, wid)
+        && (isDeveloper()
+            || (managesWard(wid)
+                && changedOnly(['weekdayDemand', 'weekendDemand', 'minSeniorPerShift', 'preferredSeniorPerShift',
+                                'requireHeadApproval', 'updatedAt', 'updatedBy'])));
+    }
+
+    // ------------------------------------------------------------------
+    // schedules/{wardId}_{startDate}
     // ------------------------------------------------------------------
     function validSchedule(s, id) {
-      return s.id == id
-        && s.startDate == id
+      return s.wardId is string
+        && id == s.wardId + '_' + s.startDate
+        && s.id == id
+        && exists(wardPath(s.wardId))
         && s.status in ['draft', 'published']
         && s.nurseOrder is list
         && s.nurses is map
@@ -136,8 +181,9 @@ service cloud.firestore {
         && s.holidays is list;
     }
 
+    // Only work shifts and plain days off may be swapped – never any kind of leave or 預假.
     function notLeave(code) {
-      return !(code in ['AL', 'OL', 'REQ']);
+      return code in ['D', 'E', 'N', 'OFF'];
     }
 
     // Row `n` equals row `o` everywhere except at indexes lo and hi.
@@ -189,17 +235,21 @@ service cloud.firestore {
     }
 
     match /schedules/{sid} {
-      allow read: if isManager() || (registered() && resource.data.status == 'published');
-      allow create: if isManager() && validSchedule(request.resource.data, sid);
-      allow update: if (isManager() && validSchedule(request.resource.data, sid))
+      allow read: if managesWard(resource.data.wardId) || (registered() && resource.data.status == 'published');
+      allow create: if managesWard(request.resource.data.wardId) && validSchedule(request.resource.data, sid);
+      allow update: if (managesWard(resource.data.wardId)
+            && request.resource.data.wardId == resource.data.wardId
+            && validSchedule(request.resource.data, sid))
         || swapApplication(sid);
-      allow delete: if isManager() && (resource.data.status == 'draft' || isDeveloper());
+      // Developers may also remove schedules from before wards existed (no wardId) after migrating them.
+      allow delete: if isDeveloper() || (managesWard(resource.data.wardId) && resource.data.status == 'draft');
     }
 
     // ------------------------------------------------------------------
     // swap_requests
     // ------------------------------------------------------------------
     function validSwapCreate(s) {
+      let sched = get(schedulePath(s.scheduleId)).data;
       return s.status == 'pending_target'
         && s.requesterId != s.targetId
         && s.requesterShift in ['D', 'E', 'N']
@@ -208,11 +258,12 @@ service cloud.firestore {
         && s.targetDay is int && s.targetDay >= 0 && s.targetDay < 28
         && s.targetEmail is string
         && s.warnings is list
-        && get(schedulePath(s.scheduleId)).data.status == 'published';
+        && sched.status == 'published'
+        && s.wardId == sched.wardId;
     }
 
     function headApprovalRequired() {
-      return exists(settingsPath()) && get(settingsPath()).data.requireHeadApproval == true;
+      return get(wardPath(resource.data.wardId)).data.get('requireHeadApproval', false) == true;
     }
 
     function targetResponseValid(id) {
@@ -229,13 +280,14 @@ service cloud.firestore {
     }
 
     match /swap_requests/{id} {
-      allow read: if isManager() || (registered() && isParticipant());
+      allow read: if managesWard(resource.data.wardId) || (registered() && isParticipant());
 
       allow create: if registered()
         && validSwapCreate(request.resource.data)
-        && (request.resource.data.requesterId == myEmail() || isManager());
+        && (request.resource.data.requesterId == myEmail() || managesWard(request.resource.data.wardId));
 
-      allow update: if isManager()
+      allow update: if isDeveloper()
+        || (managesWard(resource.data.wardId) && request.resource.data.wardId == resource.data.wardId)
         // requester withdraws
         || (registered()
             && resource.data.requesterId == myEmail()
@@ -257,28 +309,39 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // leave_requests
     // ------------------------------------------------------------------
+    // Leave types: keep in sync with LEAVE_TYPES in src/types/schedule.ts.
     function validLeave(l) {
-      return l.type in ['AL', 'OL', 'REQ']
+      return l.wardId is string
+        && l.type in ['AL', 'OL', 'REQ', 'SL', 'PL', 'MNL', 'CO', 'BL', 'WL', 'MAT', 'PAT', 'IL']
         && l.startDate is string
         && l.endDate is string
         && l.startDate <= l.endDate
         && l.status in ['pending', 'approved', 'rejected', 'cancelled'];
     }
 
+    // The leave is filed under one of the nurse's own wards.
+    function nurseInWard(l) {
+      return l.wardId in get(userPath(l.nurseId)).data.get('wardIds', []);
+    }
+
     match /leave_requests/{id} {
-      allow read: if isManager() || (registered() && resource.data.nurseId == myEmail());
+      allow read: if managesWard(resource.data.wardId) || (registered() && resource.data.nurseId == myEmail());
       allow create: if validLeave(request.resource.data)
-        && (isManager()
+        && (isDeveloper()
+            || (managesWard(request.resource.data.wardId) && nurseInWard(request.resource.data))
             || (registered()
                 && request.resource.data.nurseId == myEmail()
-                && request.resource.data.status == 'pending'));
-      allow update: if (isManager() && validLeave(request.resource.data))
+                && request.resource.data.status == 'pending'
+                && nurseInWard(request.resource.data)));
+      allow update: if (validLeave(request.resource.data)
+            && (isDeveloper()
+                || (managesWard(resource.data.wardId) && request.resource.data.wardId == resource.data.wardId)))
         || (registered()
             && resource.data.nurseId == myEmail()
             && resource.data.status == 'pending'
             && request.resource.data.status == 'cancelled'
             && changedOnly(['status', 'updatedAt']));
-      allow delete: if isManager();
+      allow delete: if managesWard(resource.data.wardId);
     }
 
     // ------------------------------------------------------------------

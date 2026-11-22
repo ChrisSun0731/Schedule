@@ -9,13 +9,18 @@ import {
   query,
   updateDoc,
   where,
+  type DocumentData,
+  type Query,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '@/services/firebase';
 import type { LeaveRequest, LeaveStatus, LeaveType } from '@/types/schedule';
 import { useAuthStore } from '@/stores/auth';
+import { useWardsStore } from '@/stores/wards';
 
 export interface NewLeave {
+  /** The nurse's ward; its head nurse decides. */
+  wardId: string;
   nurseId: string;
   nurseName: string;
   type: LeaveType;
@@ -24,35 +29,66 @@ export interface NewLeave {
   note: string;
 }
 
-export const useLeavesStore = defineStore('leaves', () => {
-  const list = ref<LeaveRequest[]>([]);
-  const loaded = ref(false);
-  let unsub: Unsubscribe | null = null;
+/** Developers see every request; others their own plus those of the wards they manage. */
+export type LeaveScope = { kind: 'all' } | { kind: 'wards'; managed: string[] };
 
-  function start(me: string, isManager: boolean): void {
+export const useLeavesStore = defineStore('leaves', () => {
+  /** Snapshot per listener, merged into `list`. */
+  const parts = ref<Record<string, LeaveRequest[]>>({});
+  const loaded = ref(false);
+  let unsubs: Unsubscribe[] = [];
+
+  function start(me: string, scope: LeaveScope): void {
     stop();
     const col = collection(db(), 'leave_requests');
-    unsub = onSnapshot(isManager ? col : query(col, where('nurseId', '==', me)), (snap) => {
-      list.value = snap.docs
-        .map((d) => ({ ...(d.data() as LeaveRequest), id: d.id }))
-        .sort((a, b) => b.startDate.localeCompare(a.startDate) || b.createdAt - a.createdAt);
-      loaded.value = true;
-    });
+    const listen = (key: string, q: Query<DocumentData>) =>
+      unsubs.push(
+        onSnapshot(
+          q,
+          (snap) => {
+            parts.value = {
+              ...parts.value,
+              [key]: snap.docs.map((d) => ({ ...(d.data() as LeaveRequest), id: d.id, wardId: d.data().wardId ?? '' })),
+            };
+            loaded.value = true;
+          },
+          () => (loaded.value = true),
+        ),
+      );
+    if (scope.kind === 'all') {
+      listen('all', col);
+      return;
+    }
+    listen('mine', query(col, where('nurseId', '==', me)));
+    for (const w of new Set(scope.managed)) listen(`w:${w}`, query(col, where('wardId', '==', w)));
   }
 
   function stop(): void {
-    unsub?.();
-    unsub = null;
-    list.value = [];
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    parts.value = {};
     loaded.value = false;
   }
 
-  const mine = computed(() => list.value.filter((l) => l.nurseId === useAuthStore().email));
-  const pending = computed(() => list.value.filter((l) => l.status === 'pending'));
+  const list = computed(() => {
+    const byId = new Map<string, LeaveRequest>();
+    for (const part of Object.values(parts.value)) for (const l of part) byId.set(l.id, l);
+    return [...byId.values()].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.createdAt - a.createdAt);
+  });
 
-  /** Approved leave overlapping [start, end]. */
-  function approvedBetween(start: string, end: string): LeaveRequest[] {
-    return list.value.filter((l) => l.status === 'approved' && l.startDate <= end && l.endDate >= start);
+  const mine = computed(() => list.value.filter((l) => l.nurseId === useAuthStore().email));
+  /** Waiting for a decision by the signed-in user (wards they manage). */
+  const pending = computed(() => {
+    const wards = useWardsStore();
+    return list.value.filter((l) => l.status === 'pending' && wards.canManage(l.wardId));
+  });
+
+  /** Approved leave overlapping [start, end] (optionally only these nurses). */
+  function approvedBetween(start: string, end: string, nurseIds?: Iterable<string>): LeaveRequest[] {
+    const only = nurseIds ? new Set(nurseIds) : null;
+    return list.value.filter(
+      (l) => l.status === 'approved' && l.startDate <= end && l.endDate >= start && (!only || only.has(l.nurseId)),
+    );
   }
 
   /** Nurses file pending requests; managers may enter approved leave directly. */

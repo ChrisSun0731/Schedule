@@ -1,22 +1,39 @@
 <template>
   <q-page class="page-pad">
-    <div class="row items-center q-mb-md q-gutter-sm">
-      <q-icon name="event_busy" size="26px" color="primary" />
-      <div class="page-title">請假</div>
-      <q-chip dense color="teal-1" text-color="teal-10" icon="low_priority" class="gt-xs">
-        優先序：
-        <ShiftPill code="AL" dense :tooltip="false" class="q-mx-xs" />›
-        <ShiftPill code="OL" dense :tooltip="false" class="q-mx-xs" />›
-        <ShiftPill code="REQ" dense :tooltip="false" class="q-ml-xs" />
+    <div class="page-head q-mb-md">
+      <h1 class="page-title">請假</h1>
+      <q-chip dense color="tint" text-color="on-tint" icon="low_priority" class="gt-xs">
+        優先序：法定假
+        <template v-for="t in DISCRETIONARY_LEAVE_TYPES" :key="t">
+          ›<ShiftPill :code="t" dense :tooltip="false" class="q-mx-xs" />
+        </template>
+        <q-tooltip max-width="20rem">
+          法定假（{{ STATUTORY_LEAVE_TYPES.map((t) => LEAVE_LABELS[t]).join('、') }}）核准後一律排入，人力不足時由護理長補人；其餘假別依序在人力許可時排入，同序者先申請先排。
+        </q-tooltip>
       </q-chip>
       <q-space />
-      <q-btn unelevated no-caps color="primary" icon="add" :label="auth.isManager ? '新增請假' : '申請請假'" @click="openDialog" />
+      <q-select
+        v-if="wards.mine.length > 1"
+        v-model="wardFilter"
+        dense
+        outlined
+        emit-value
+        map-options
+        options-dense
+        aria-label="依病房篩選"
+        :options="wardOptions"
+        class="bg-surface ward-filter"
+      >
+        <template #prepend><q-icon name="apartment" /></template>
+      </q-select>
+      <q-btn unelevated no-caps color="primary" icon="add" :label="auth.isManager ? '新增請假' : '申請請假'" :disable="!canFile" @click="openDialog" />
+      <div v-if="!canFile" class="text-caption text-muted full-width text-right">尚未分配病房，請聯絡系統管理員</div>
     </div>
 
     <q-card flat bordered class="list-card">
-      <q-tabs v-if="auth.isManager" v-model="tab" dense no-caps align="left" active-color="primary" indicator-color="primary" class="text-grey-8">
+      <q-tabs v-if="auth.isManager" v-model="tab" dense no-caps align="left" active-color="primary" indicator-color="primary" class="text-muted">
         <q-tab name="pending" icon="pending_actions" label="待審核">
-          <q-badge v-if="leaves.pending.length" color="negative" floating>{{ leaves.pending.length }}</q-badge>
+          <q-badge v-if="pending.length" color="negative" floating>{{ pending.length }}</q-badge>
         </q-tab>
         <q-tab name="all" icon="list" label="全部" />
         <q-tab name="mine" icon="person" label="我的" />
@@ -32,27 +49,52 @@
             <q-item-label class="text-weight-medium">
               <span v-if="auth.isManager">{{ l.nurseName }} · </span>{{ LEAVE_LABELS[l.type] }}
             </q-item-label>
-            <q-item-label caption>
+            <q-item-label caption class="text-muted">
               {{ formatMDW(l.startDate) }}<template v-if="l.endDate !== l.startDate"> – {{ formatMDW(l.endDate) }}</template>
-              · {{ diffDays(l.startDate, l.endDate) + 1 }} 天
+              · {{ diffDays(l.startDate, l.endDate) + 1 }} 天<template v-if="wards.mine.length > 1"> · {{ wards.nameOf(l.wardId) }}</template>
             </q-item-label>
-            <q-item-label v-if="l.note" caption class="text-grey-8">{{ l.note }}</q-item-label>
+            <q-item-label v-if="l.note" caption class="text-muted">{{ l.note }}</q-item-label>
+            <!-- Actions sit under the text so they never squeeze it on a phone. -->
+            <div v-if="wards.canManage(l.wardId) && l.status === 'pending'" class="row q-gutter-sm q-mt-sm">
+              <q-btn flat dense no-caps color="negative" icon="close" label="駁回" :loading="busy === `${l.id}:r`" :disable="!!busy" @click="decide(l, 'rejected')" />
+              <q-btn unelevated dense no-caps color="positive" icon="check" label="核准" class="q-px-sm" :loading="busy === `${l.id}:a`" :disable="!!busy" @click="decide(l, 'approved')" />
+            </div>
+            <div v-else-if="l.status === 'pending' && l.nurseId === auth.email" class="q-mt-sm">
+              <q-btn flat dense no-caps color="muted" icon="undo" label="撤回申請" @click="cancel(l)" />
+            </div>
           </q-item-section>
-          <q-item-section side>
+          <q-item-section side top>
             <div class="row items-center no-wrap q-gutter-xs">
-              <q-chip dense :color="LEAVE_STATUS_META[l.status].color" text-color="white">{{ LEAVE_STATUS_META[l.status].label }}</q-chip>
-              <template v-if="auth.isManager && l.status === 'pending'">
-                <q-btn round flat dense icon="close" color="negative" :loading="busy === `${l.id}:r`" @click="decide(l, 'rejected')"><q-tooltip>駁回</q-tooltip></q-btn>
-                <q-btn round unelevated dense icon="check" color="positive" :loading="busy === `${l.id}:a`" @click="decide(l, 'approved')"><q-tooltip>核准</q-tooltip></q-btn>
-              </template>
-              <q-btn v-else-if="l.status === 'pending' && l.nurseId === auth.email" flat dense no-caps color="grey-8" icon="undo" label="撤回" @click="cancel(l)" />
-              <q-btn v-if="auth.isManager && l.status !== 'pending'" flat round dense icon="delete_outline" color="grey-6" @click="remove(l)"><q-tooltip>刪除</q-tooltip></q-btn>
+              <q-chip dense :color="LEAVE_STATUS_META[l.status].color" text-color="white" class="q-ma-none">{{ LEAVE_STATUS_META[l.status].label }}</q-chip>
+              <q-btn
+                v-if="wards.canManage(l.wardId) && l.status !== 'pending'"
+                flat
+                round
+                dense
+                icon="delete_outline"
+                color="muted"
+                :aria-label="`刪除 ${l.nurseName} ${formatMDW(l.startDate)} 的請假紀錄`"
+                @click="remove(l)"
+              >
+                <q-tooltip>刪除</q-tooltip>
+              </q-btn>
             </div>
           </q-item-section>
         </q-item>
-        <q-item v-if="!visible.length">
-          <q-item-section class="text-center text-grey-6 q-py-xl"><q-icon name="inbox" size="40px" /></q-item-section>
-        </q-item>
+        <div v-if="!visible.length" class="empty-state">
+          <q-icon name="inbox" size="40px" class="text-subtle" />
+          <div class="empty-title q-mt-sm">{{ emptyText }}</div>
+          <q-btn
+            v-if="tab === 'mine' || !auth.isManager"
+            unelevated
+            no-caps
+            color="primary"
+            icon="add"
+            :label="auth.isManager ? '新增請假' : '申請請假'"
+            class="q-mt-md"
+            @click="openDialog"
+          />
+        </div>
       </q-list>
     </q-card>
 
@@ -67,6 +109,7 @@
           <q-select
             v-if="auth.isManager"
             v-model="form.nurseId"
+            aria-required="true"
             outlined
             dense
             emit-value
@@ -75,29 +118,34 @@
             :options="nurseOptions"
             label="護理師"
           />
-          <q-btn-toggle
-            v-model="form.type"
-            spread
-            no-caps
-            unelevated
-            toggle-color="primary"
-            color="grey-2"
-            text-color="grey-9"
-            :options="LEAVE_TYPES.map((t) => ({ value: t, label: LEAVE_LABELS[t] }))"
-          />
+          <q-select v-model="form.type" outlined dense emit-value map-options :options="typeOptions" label="假別">
+            <template #selected-item="{ opt }">
+              <ShiftPill :code="opt.value" dense :tooltip="false" class="q-mr-sm" />{{ opt.label }}
+            </template>
+            <template #option="{ itemProps, opt }">
+              <q-item v-bind="itemProps">
+                <q-item-section avatar><ShiftPill :code="opt.value" dense :tooltip="false" /></q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ opt.label }}</q-item-label>
+                  <q-item-label v-if="opt.caption" caption>{{ opt.caption }}</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
           <div class="row justify-center">
             <q-date v-model="range" range mask="YYYY-MM-DD" :locale="dateLocale" minimal flat bordered />
           </div>
-          <div class="text-center text-caption text-grey-8">{{ rangeLabel }}</div>
+          <div class="text-center text-caption text-muted" aria-live="polite">{{ rangeLabel }}</div>
           <q-input v-model="form.note" outlined dense autogrow label="備註（選填）" maxlength="200" />
-          <q-banner v-if="auth.isManager" dense rounded class="bg-teal-1 text-teal-10">
+          <div v-if="!auth.isManager && myWardId" class="text-caption text-muted">由 {{ wards.nameOf(myWardId) }} 護理長審核</div>
+          <q-banner v-if="auth.isManager" dense rounded class="bg-tint text-on-tint">
             <template #avatar><q-icon name="verified" /></template>
             由護理長新增的請假直接核准
           </q-banner>
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn v-close-popup flat no-caps color="grey-8" label="取消" />
-          <q-btn unelevated no-caps color="primary" icon="send" label="送出" :disable="!canSubmit" :loading="saving" @click="submit" />
+          <q-btn v-close-popup flat no-caps color="muted" label="取消" />
+          <q-btn unelevated no-caps color="primary" icon="send" :label="auth.isManager ? '新增' : '送出申請'" :disable="!canSubmit" :loading="saving" @click="submit" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -113,29 +161,65 @@ import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useLeavesStore } from '@/stores/leaves';
 import { useUsersStore } from '@/stores/users';
-import { LEAVE_TYPES, type LeaveRequest, type LeaveType } from '@/types/schedule';
+import { useWardsStore } from '@/stores/wards';
+import {
+  DISCRETIONARY_LEAVE_TYPES,
+  LEAVE_TYPES,
+  STATUTORY_LEAVE_TYPES,
+  isStatutoryLeave,
+  type LeaveRequest,
+  type LeaveType,
+} from '@/types/schedule';
 import { diffDays, formatMDW } from '@/utils/dates';
 import { dateLocale } from '@/utils/quasarLocale';
 
 const auth = useAuthStore();
 const leaves = useLeavesStore();
 const users = useUsersStore();
+const wards = useWardsStore();
 
 const tab = ref<'pending' | 'all' | 'mine'>(auth.isManager ? 'pending' : 'mine');
 const dialog = ref(false);
 const saving = ref(false);
 const busy = ref<string | null>(null);
 const form = reactive<{ nurseId: string | null; type: LeaveType; note: string }>({ nurseId: null, type: 'AL', note: '' });
+const typeOptions = LEAVE_TYPES.map((t) => ({
+  value: t,
+  label: LEAVE_LABELS[t],
+  caption: isStatutoryLeave(t) ? '法定假：核准後一律排入' : t === 'REQ' ? '指定休假日，計入例假／休息日' : '',
+}));
 const range = ref<{ from: string; to: string } | string | null>(null);
 
+/** null = every ward the user works in. */
+const wardFilter = ref<string | null>(null);
+const wardOptions = computed(() => [{ value: null, label: '全部病房' }, ...wards.mine.map((w) => ({ value: w.id, label: w.name }))]);
+const inWard = (items: LeaveRequest[]) => (wardFilter.value ? items.filter((l) => l.wardId === wardFilter.value) : items);
+const pending = computed(() => inWard(leaves.pending));
+
 const visible = computed(() => {
-  if (!auth.isManager || tab.value === 'mine') return leaves.mine;
-  return tab.value === 'pending' ? leaves.pending : leaves.list;
+  if (!auth.isManager || tab.value === 'mine') return inWard(leaves.mine);
+  return tab.value === 'pending' ? pending.value : inWard(leaves.list.filter((l) => wards.canManage(l.wardId)));
 });
 
-const nurseOptions = computed(() =>
-  users.schedulable.map((u) => ({ value: u.id, label: `${u.displayName}（${u.employeeId}）` })),
-);
+/** The signed-in nurse's own ward (leave is decided by its head nurse). */
+const myWardId = computed(() => auth.profile?.wardIds.find((id) => wards.byId.has(id)) ?? null);
+
+/** Staff on the rosters of the wards I manage, with the ward their leave is filed under. */
+const nurseChoices = computed(() => {
+  const out: { value: string; label: string; wardId: string }[] = [];
+  for (const w of wards.mine.filter((x) => wards.canManage(x.id))) {
+    if (wardFilter.value && w.id !== wardFilter.value) continue;
+    for (const u of users.rosterOf(w.id)) {
+      if (out.some((o) => o.value === u.id)) continue;
+      const ward = wards.mine.length > 1 ? ` · ${w.name}` : '';
+      out.push({ value: u.id, label: `${u.displayName}（${u.employeeId}）${ward}`, wardId: w.id });
+    }
+  }
+  return out;
+});
+const nurseOptions = computed(() => nurseChoices.value.map(({ value, label }) => ({ value, label })));
+
+const canFile = computed(() => (auth.isManager ? nurseChoices.value.length > 0 : !!myWardId.value));
 
 const dates = computed(() => {
   if (!range.value) return null;
@@ -145,7 +229,26 @@ const dates = computed(() => {
 const rangeLabel = computed(() =>
   dates.value ? `${formatMDW(dates.value.from)} – ${formatMDW(dates.value.to)} · ${diffDays(dates.value.from, dates.value.to) + 1} 天` : '選擇日期',
 );
-const canSubmit = computed(() => !!dates.value && (!auth.isManager || !!form.nurseId));
+const canSubmit = computed(() => !!dates.value && (auth.isManager ? !!form.nurseId : !!myWardId.value));
+
+const emptyText = computed(() => {
+  if (auth.isManager && tab.value === 'pending') return '沒有待審核的請假';
+  if (auth.isManager && tab.value === 'all') return '尚無請假紀錄';
+  return '還沒有請假紀錄';
+});
+
+function confirmDialog(title: string, message: string, ok: string, color: string): Promise<boolean> {
+  return new Promise((resolve) =>
+    Dialog.create({
+      title,
+      message,
+      cancel: { flat: true, noCaps: true, label: '取消', color: 'muted' },
+      ok: { unelevated: true, noCaps: true, label: ok, color },
+    })
+      .onOk(() => resolve(true))
+      .onCancel(() => resolve(false)),
+  );
+}
 
 function openDialog(): void {
   form.nurseId = auth.isManager ? null : auth.email;
@@ -158,11 +261,13 @@ function openDialog(): void {
 async function submit(): Promise<void> {
   const d = dates.value;
   const nurseId = auth.isManager ? form.nurseId : auth.email;
-  if (!d || !nurseId) return;
+  const wardId = auth.isManager ? nurseChoices.value.find((o) => o.value === nurseId)?.wardId : myWardId.value;
+  if (!d || !nurseId || !wardId) return;
   saving.value = true;
   try {
     await leaves.create(
       {
+        wardId,
         nurseId,
         nurseName: users.byId.get(nurseId)?.displayName ?? auth.displayName,
         type: form.type,
@@ -182,9 +287,15 @@ async function submit(): Promise<void> {
 }
 
 async function decide(l: LeaveRequest, status: 'approved' | 'rejected'): Promise<void> {
+  // A decision cannot be changed afterwards in the app, so a rejection is confirmed first.
+  if (status === 'rejected') {
+    const range = l.endDate !== l.startDate ? `${formatMDW(l.startDate)} – ${formatMDW(l.endDate)}` : formatMDW(l.startDate);
+    if (!(await confirmDialog('駁回請假', `駁回 ${l.nurseName} 的${LEAVE_LABELS[l.type]}（${range}）？`, '駁回', 'negative'))) return;
+  }
   busy.value = `${l.id}:${status === 'approved' ? 'a' : 'r'}`;
   try {
     await leaves.decide(l, status);
+    Notify.create({ type: status === 'approved' ? 'positive' : 'info', message: status === 'approved' ? `已核准 ${l.nurseName} 的請假` : `已駁回 ${l.nurseName} 的請假` });
   } catch (err) {
     Notify.create({ type: 'negative', message: errorMessage(err) });
   } finally {
@@ -200,20 +311,35 @@ async function cancel(l: LeaveRequest): Promise<void> {
   }
 }
 
-function remove(l: LeaveRequest): void {
-  Dialog.create({
-    title: '刪除請假紀錄',
-    message: `${l.nurseName} ${formatMDW(l.startDate)}`,
-    cancel: { flat: true, label: '取消', color: 'grey-8' },
-    ok: { unelevated: true, label: '刪除', color: 'negative' },
-  }).onOk(() => void leaves.remove(l).catch((err) => Notify.create({ type: 'negative', message: errorMessage(err) })));
+async function remove(l: LeaveRequest): Promise<void> {
+  if (!(await confirmDialog('刪除請假紀錄', `刪除 ${l.nurseName} ${formatMDW(l.startDate)} 的${LEAVE_LABELS[l.type]}紀錄？此動作無法復原。`, '刪除', 'negative'))) return;
+  try {
+    await leaves.remove(l);
+  } catch (err) {
+    Notify.create({ type: 'negative', message: errorMessage(err) });
+  }
 }
 </script>
 
 <style scoped lang="scss">
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.page-head .q-space {
+  flex: 1 1 auto;
+}
+.ward-filter {
+  min-width: 170px;
+  @media (max-width: 599px) {
+    flex: 1 1 100%;
+    order: 3;
+  }
+}
 .list-card {
   border-radius: 12px;
-  background: #fff;
   max-width: 860px;
 }
 </style>

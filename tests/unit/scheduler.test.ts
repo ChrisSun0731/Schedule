@@ -24,7 +24,7 @@ const nurses: PlannerNurse[] = createDemoNurses().map((u) => ({
 }));
 
 function leave(id: string, nurseId: string, type: LeaveRequest['type'], start: string, end: string, createdAt = 1): LeaveRequest {
-  return { id, nurseId, nurseName: nurseId, type, startDate: start, endDate: end, note: '', status: 'approved', createdAt, updatedAt: createdAt };
+  return { id, wardId: 'w1', nurseId, nurseName: nurseId, type, startDate: start, endDate: end, note: '', status: 'approved', createdAt, updatedAt: createdAt };
 }
 
 /**
@@ -57,7 +57,7 @@ function bruteForceHardViolations(
     }
     for (let i = 0; i + rules.maxConsecutiveOff < row.length; i++) {
       const win = row.slice(i, i + rules.maxConsecutiveOff + 1);
-      if (win.every((c) => !work(c)) && !win.some((c) => c === 'AL' || c === 'OL')) out.push(`off-run ${n.id}@${i}`);
+      if (win.every((c) => !work(c)) && !win.some((c) => !rest(c))) out.push(`off-run ${n.id}@${i}`);
     }
     for (let w = 0; w < 4; w++) {
       if (row.slice(w * 7, w * 7 + 7).filter(rest).length < rules.minOffPerWeek) out.push(`week ${n.id}#${w}`);
@@ -137,6 +137,16 @@ describe('evaluateSchedule – nurse rules', () => {
     expect(weekly.map((x) => x.severity)).toEqual(['warning']);
   });
 
+  it('treats every new leave type like AL: exempts long off-runs, never counts as rest', () => {
+    for (const code of ['SL', 'PL', 'MNL', 'CO', 'BL', 'WL', 'MAT', 'PAT', 'IL'] as const) {
+      const row = rowOf(`OFF ${code} ${code} OFF D D D D D OFF D D D D D OFF OFF D D D D D OFF OFF D D D D`);
+      const v = evalRow(row);
+      expect(v.some((x) => x.rule === 'max_consecutive_off'), code).toBe(false);
+      // 7 rest days (OFF) – the two leave days are not rest.
+      expect(v.find((x) => x.rule === 'period_off')?.message, code).toContain('7 天');
+    }
+  });
+
   it('requires 8 rest days per 28 days (AL/OL do not count)', () => {
     const row = rowOf('D D D D D OFF AL D D D D D OFF OFF D D D D D OFF OFF D D D D D OFF OFF');
     const v = evalRow(row).find((x) => x.rule === 'period_off');
@@ -181,6 +191,44 @@ describe('evaluateSchedule – daily coverage & skill mix', () => {
     expect(res.demand.D[5]).toBe(8); // Saturday
     expect(res.demand.D[18]).toBe(8); // holiday
     expect(res.daySeverity['SE|0']).toBe('error');
+  });
+});
+
+describe('planLeave – statutory leave first, then AL > OL > CO > PL > REQ', () => {
+  it('always places statutory leave, even on a day with no spare capacity', () => {
+    const few = nurses.slice(0, 22); // weekday demand 21 → 1 spare on day 0
+    const requests = [
+      leave('al', few[0]!.id, 'AL', START, START, 1), // oldest – takes the only spare slot
+      leave('sl', few[1]!.id, 'SL', START, START, 2),
+      leave('bl', few[2]!.id, 'BL', START, START, 3),
+    ];
+    const plan = planLeave({ days, nurses: few, rules: { ...DEFAULT_RULES, minOffPerPeriod: 0 }, requests });
+    const status = Object.fromEntries(plan.placements.map((p) => [p.requestId, p.status]));
+    expect(status).toEqual({ sl: 'placed', bl: 'placed', al: 'bumped' });
+  });
+
+  it('orders discretionary leave AL > OL > CO > PL > REQ', () => {
+    const few = nurses.slice(0, 24); // 3 spare on day 0
+    const requests = [
+      leave('req', few[0]!.id, 'REQ', START, START, 1),
+      leave('pl', few[1]!.id, 'PL', START, START, 2),
+      leave('co', few[2]!.id, 'CO', START, START, 3),
+      leave('ol', few[3]!.id, 'OL', START, START, 4),
+      leave('al', few[4]!.id, 'AL', START, START, 5),
+    ];
+    const plan = planLeave({ days, nurses: few, rules: { ...DEFAULT_RULES, minOffPerPeriod: 0 }, requests });
+    const status = Object.fromEntries(plan.placements.map((p) => [p.requestId, p.status]));
+    expect(status).toEqual({ al: 'placed', ol: 'placed', co: 'placed', pl: 'bumped', req: 'bumped' });
+  });
+
+  it('lets a REQ run longer than the off limit when it touches other leave', () => {
+    const plan = planLeave({
+      days,
+      nurses,
+      rules: DEFAULT_RULES,
+      requests: [leave('sl', nurses[3]!.id, 'SL', '2026-12-07', '2026-12-08'), leave('r', nurses[3]!.id, 'REQ', '2026-12-09', '2026-12-10', 2)],
+    });
+    expect(plan.placements.map((p) => p.status)).toEqual(['placed', 'placed', 'placed', 'placed']);
   });
 });
 

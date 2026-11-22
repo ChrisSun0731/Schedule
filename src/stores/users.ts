@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { collection, deleteDoc, doc, onSnapshot, setDoc, writeBatch, type DocumentData, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/services/firebase';
-import { createDemoHeadNurse, createDemoNurses } from '@/services/demoData';
+import { createDemoHeadNurse, createDemoIcuNurses, createDemoNurses, createDemoWards } from '@/services/demoData';
 import { NURSE_LEVELS, USER_ROLES, WORK_SHIFTS, type NurseLevel, type UserProfile, type UserRole, type WorkShift } from '@/types/schedule';
 
 export function normalizeUser(id: string, data: DocumentData): UserProfile {
@@ -17,6 +17,7 @@ export function normalizeUser(id: string, data: DocumentData): UserProfile {
     displayName: String(data.displayName ?? id),
     employeeId: String(data.employeeId ?? ''),
     role,
+    wardIds: Array.isArray(data.wardIds) ? (data.wardIds as unknown[]).filter((w): w is string => typeof w === 'string' && !!w) : [],
     level,
     allowedShifts: allowed.length ? allowed : [...WORK_SHIFTS],
     schedulable: data.schedulable !== false,
@@ -58,6 +59,17 @@ export const useUsersStore = defineStore('users', () => {
   const byId = computed(() => new Map(list.value.map((u) => [u.id, u])));
   const schedulable = computed(() => list.value.filter((u) => u.active && u.schedulable));
 
+  /** Active, schedulable staff on a ward's roster (rows of its new schedules). */
+  function rosterOf(wardId: string | null | undefined): UserProfile[] {
+    if (!wardId) return [];
+    return schedulable.value.filter((u) => u.wardIds.includes(wardId));
+  }
+
+  /** Head nurses assigned to a ward. */
+  function headsOf(wardId: string): UserProfile[] {
+    return list.value.filter((u) => u.role === 'head_nurse' && u.active && u.wardIds.includes(wardId));
+  }
+
   async function save(input: UserProfile): Promise<void> {
     const id = input.email.trim().toLowerCase();
     const existing = byId.value.get(id);
@@ -81,18 +93,24 @@ export const useUsersStore = defineStore('users', () => {
     await deleteDoc(doc(db(), 'users', id));
   }
 
-  /** Adds 30 fictional demo nurses + a demo head nurse (skips e-mails that already exist). */
-  async function importDemo(): Promise<number> {
+  /**
+   * Adds two demo wards (5A, ICU), 46 fictional nurses on them and a head nurse managing both.
+   * Skips wards and e-mails that already exist. `wardExists` comes from the wards store.
+   */
+  async function importDemo(wardExists: (id: string) => boolean, by: string): Promise<number> {
     const batch = writeBatch(db());
     let added = 0;
-    for (const u of [createDemoHeadNurse(), ...createDemoNurses()]) {
+    for (const w of createDemoWards(by)) {
+      if (!wardExists(w.id)) batch.set(doc(db(), 'wards', w.id), w);
+    }
+    for (const u of [createDemoHeadNurse(), ...createDemoNurses(), ...createDemoIcuNurses()]) {
       if (byId.value.has(u.id)) continue;
       batch.set(doc(db(), 'users', u.id), u);
       added++;
     }
-    if (added) await batch.commit();
+    await batch.commit();
     return added;
   }
 
-  return { list, loaded, byId, schedulable, start, stop, save, remove, importDemo };
+  return { list, loaded, byId, schedulable, rosterOf, headsOf, start, stop, save, remove, importDemo };
 });

@@ -11,6 +11,7 @@ import {
   updateDoc,
   where,
   type DocumentData,
+  type Query,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '@/services/firebase';
@@ -21,47 +22,60 @@ import { useAuthStore } from '@/stores/auth';
 import { useMailQueueStore } from '@/stores/mailQueue';
 import { normalizeSchedule, useSchedulesStore } from '@/stores/schedules';
 import { useSettingsStore } from '@/stores/settings';
+import { useWardsStore } from '@/stores/wards';
 
-export type NewSwap = Omit<SwapRequest, 'id' | 'status' | 'warnings' | 'createdAt' | 'updatedAt' | 'emailStatus'>;
+/** The ward is taken from the schedule. */
+export type NewSwap = Omit<SwapRequest, 'id' | 'wardId' | 'status' | 'warnings' | 'createdAt' | 'updatedAt' | 'emailStatus'>;
 
 function normalizeSwap(id: string, d: DocumentData): SwapRequest {
-  return { ...(d as SwapRequest), id, warnings: d.warnings ?? [], note: d.note ?? '' };
+  return { ...(d as SwapRequest), id, wardId: d.wardId ?? '', warnings: d.warnings ?? [], note: d.note ?? '' };
 }
 
+/**
+ * Which requests to listen to. Everyone gets the ones they file or are asked about;
+ * developers additionally see every request, head nurses those of the wards they manage.
+ */
+export type SwapScope = { kind: 'all' } | { kind: 'wards'; managed: string[] };
+
 export const useSwapsStore = defineStore('swaps', () => {
-  const all = ref<SwapRequest[]>([]);
-  const mineAsRequester = ref<SwapRequest[]>([]);
-  const mineAsTarget = ref<SwapRequest[]>([]);
+  /** Snapshot per listener, merged into `list`. */
+  const parts = ref<Record<string, SwapRequest[]>>({});
   const loaded = ref(false);
   let unsubs: Unsubscribe[] = [];
 
-  function start(me: string, isManager: boolean): void {
+  function start(me: string, scope: SwapScope): void {
     stop();
     const col = collection(db(), 'swap_requests');
-    const map = (target: typeof all) => (snap: { docs: { id: string; data: () => DocumentData }[] }) => {
-      target.value = snap.docs.map((d) => normalizeSwap(d.id, d.data()));
-      loaded.value = true;
-    };
-    if (isManager) {
-      unsubs.push(onSnapshot(col, map(all)));
-    } else {
-      unsubs.push(onSnapshot(query(col, where('requesterId', '==', me)), map(mineAsRequester)));
-      unsubs.push(onSnapshot(query(col, where('targetId', '==', me)), map(mineAsTarget)));
+    const listen = (key: string, q: Query<DocumentData>) =>
+      unsubs.push(
+        onSnapshot(
+          q,
+          (snap) => {
+            parts.value = { ...parts.value, [key]: snap.docs.map((d) => normalizeSwap(d.id, d.data())) };
+            loaded.value = true;
+          },
+          () => (loaded.value = true),
+        ),
+      );
+    if (scope.kind === 'all') {
+      listen('all', col);
+      return;
     }
+    listen('requester', query(col, where('requesterId', '==', me)));
+    listen('target', query(col, where('targetId', '==', me)));
+    for (const w of new Set(scope.managed)) listen(`w:${w}`, query(col, where('wardId', '==', w)));
   }
 
   function stop(): void {
     unsubs.forEach((u) => u());
     unsubs = [];
-    all.value = [];
-    mineAsRequester.value = [];
-    mineAsTarget.value = [];
+    parts.value = {};
     loaded.value = false;
   }
 
   const list = computed(() => {
     const byId = new Map<string, SwapRequest>();
-    for (const s of [...all.value, ...mineAsRequester.value, ...mineAsTarget.value]) byId.set(s.id, s);
+    for (const part of Object.values(parts.value)) for (const s of part) byId.set(s.id, s);
     return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
   });
 
@@ -75,13 +89,17 @@ export const useSwapsStore = defineStore('swaps', () => {
     const me = useAuthStore().email;
     return list.value.filter((s) => s.requesterId === me);
   });
-  const review = computed(() => list.value.filter((s) => s.status === 'pending_head'));
-  const badge = computed(() => incoming.value.length + (useAuthStore().isManager ? review.value.length : 0));
+  /** Waiting for a head nurse of a ward the signed-in user manages. */
+  const review = computed(() => {
+    const wards = useWardsStore();
+    return list.value.filter((s) => s.status === 'pending_head' && wards.canManage(s.wardId));
+  });
+  const badge = computed(() => incoming.value.length + review.value.length);
 
   // -------------------------------------------------------------------------
 
-  function wardName(): string {
-    return useSettingsStore().settings.wardName;
+  function wardName(swap: Pick<SwapRequest, 'wardId'>): string {
+    return useWardsStore().nameOf(swap.wardId);
   }
 
   async function sendResult(swap: SwapRequest, status: SwapStatus, schedule: Schedule, to: ('requester' | 'target')[]): Promise<void> {
@@ -91,7 +109,7 @@ export const useSwapsStore = defineStore('swaps', () => {
     for (const who of to) {
       const recipientName = who === 'requester' ? swap.requesterName : swap.targetName;
       const rendered = renderSwapResultEmail({
-        wardName: wardName(),
+        wardName: wardName(swap),
         swap,
         status,
         recipientName,
@@ -113,14 +131,23 @@ export const useSwapsStore = defineStore('swaps', () => {
   async function create(input: NewSwap, schedule: Schedule): Promise<SwapRequest> {
     const blocked = swapBlockedReason(schedule, input);
     if (blocked) throw new Error(blocked);
+    if (input.scheduleId !== schedule.id) throw new Error('班表不符');
     const now = Date.now();
-    const data = { ...input, status: 'pending_target' as const, warnings: [], emailStatus: null, createdAt: now, updatedAt: now };
+    const data = {
+      ...input,
+      wardId: schedule.wardId,
+      status: 'pending_target' as const,
+      warnings: [],
+      emailStatus: null,
+      createdAt: now,
+      updatedAt: now,
+    };
     const ref = await addDoc(collection(db(), 'swap_requests'), data);
     const swap: SwapRequest = { ...data, id: ref.id };
 
     const settings = useSettingsStore();
     const rendered = renderSwapRequestEmail({
-      wardName: wardName(),
+      wardName: wardName(swap),
       swap,
       cells: swapCells(schedule, swap),
       portalUrl: settings.portalUrl,
@@ -182,7 +209,7 @@ export const useSwapsStore = defineStore('swaps', () => {
   async function respond(swap: SwapRequest, approve: boolean, note: string): Promise<SwapStatus> {
     const auth = useAuthStore();
     const schedules = useSchedulesStore();
-    const settings = useSettingsStore();
+    const wards = useWardsStore();
     const ref = doc(db(), 'swap_requests', swap.id);
     const schedule = schedules.list.find((s) => s.id === swap.scheduleId);
     if (!schedule) throw new Error('找不到班表');
@@ -194,9 +221,9 @@ export const useSwapsStore = defineStore('swaps', () => {
       return 'rejected';
     }
 
-    const check = checkSwap(schedule, swap, settings.rules, schedules.previousOf(schedule));
+    const check = checkSwap(schedule, swap, wards.rulesFor(schedule.wardId), schedules.previousOf(schedule));
     if (check.blocked) throw new Error(check.blocked);
-    if (check.introduced.length || settings.settings.requireHeadApproval) {
+    if (check.introduced.length || wards.requiresHeadApproval(schedule.wardId)) {
       const warnings = check.introduced.map((v) => v.message);
       await updateDoc(ref, { status: 'pending_head', warnings, responseNote: note, respondedAt: now, updatedAt: now });
       await sendResult({ ...swap, warnings, responseNote: note }, 'pending_head', schedule, ['requester']);

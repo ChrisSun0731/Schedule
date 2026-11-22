@@ -4,17 +4,17 @@
       <q-page class="login-page flex flex-center q-pa-md">
         <q-card flat class="login-card">
           <q-card-section class="text-center q-pt-xl">
-            <div class="brand-mark q-mx-auto q-mb-md">
-              <q-icon name="medical_services" size="34px" color="white" />
+            <div class="brand-mark q-mx-auto q-mb-md" aria-hidden="true">
+              <q-icon name="medical_services" size="34px" />
             </div>
-            <div class="text-h5 text-weight-bold">護理排班系統</div>
-            <div class="text-caption text-grey-7 q-mt-xs">班表 · 換班 · 請假</div>
+            <h1 class="login-title">護理排班系統</h1>
+            <div class="text-body2 text-muted q-mt-xs">班表 · 換班 · 請假</div>
           </q-card-section>
 
           <!-- Firebase not configured -->
           <q-card-section v-if="!isFirebaseConfigured">
-            <q-banner rounded class="bg-orange-1 text-orange-10">
-              <template #avatar><q-icon name="settings_suggest" color="orange-9" /></template>
+            <q-banner rounded class="bg-warn-soft text-on-warn">
+              <template #avatar><q-icon name="settings_suggest" /></template>
               尚未設定 Firebase
               <div class="text-caption q-mt-xs">
                 設定 <code>VITE_FIREBASE_*</code> 環境變數（見 <code>.env.example</code>）後重新建置。
@@ -23,17 +23,19 @@
           </q-card-section>
 
           <q-card-section v-else-if="auth.status === 'loading'" class="flex flex-center q-py-xl">
-            <q-spinner-dots size="40px" color="primary" />
+            <q-spinner-dots size="40px" color="primary" aria-label="載入中" />
           </q-card-section>
 
           <!-- Signed in but no profile -->
           <q-card-section v-else-if="auth.status === 'unregistered' || auth.status === 'inactive'" class="text-center">
-            <q-icon :name="auth.status === 'inactive' ? 'block' : 'person_off'" size="44px" color="grey-6" />
+            <q-icon :name="auth.status === 'inactive' ? 'block' : 'person_off'" size="44px" class="text-subtle" />
             <div class="text-subtitle1 text-weight-medium q-mt-sm">
               {{ auth.status === 'inactive' ? '帳號已停用' : '帳號尚未註冊' }}
             </div>
-            <q-chip outline color="grey-8" icon="mail" class="q-mt-sm">{{ auth.email }}</q-chip>
-            <div class="text-caption text-grey-7 q-mt-sm">請聯絡系統管理員</div>
+            <q-chip outline color="muted" icon="mail" class="q-mt-sm">{{ auth.email }}</q-chip>
+            <div class="text-body2 text-muted q-mt-sm">
+              {{ auth.status === 'inactive' ? '此帳號已被停用，請聯絡系統管理員重新啟用。' : '請聯絡系統管理員，以此 Email 為你建立帳號。' }}
+            </div>
             <q-btn class="q-mt-md full-width" outline no-caps color="primary" icon="switch_account" label="切換帳號" @click="switchAccount" />
           </q-card-section>
 
@@ -55,7 +57,7 @@
               使用 Google 帳號登入
             </q-btn>
 
-            <q-banner v-if="auth.error" dense rounded class="bg-red-1 text-negative q-mt-md">
+            <q-banner v-if="auth.error" dense rounded class="bg-error-soft text-negative q-mt-md" role="alert">
               <template #avatar><q-icon name="error_outline" /></template>
               {{ auth.error }}
             </q-banner>
@@ -66,7 +68,7 @@
               icon="science"
               label="測試帳號（Emulator）"
               class="q-mt-lg emu-box"
-              header-class="text-orange-10"
+              header-class="text-on-warn"
             >
               <div class="q-pa-sm">
                 <div class="row q-gutter-xs q-mb-sm">
@@ -76,7 +78,7 @@
                     clickable
                     dense
                     outline
-                    color="orange-10"
+                    color="on-warn"
                     @click="emuSignIn(acc.email)"
                   >
                     {{ acc.label }}
@@ -84,7 +86,7 @@
                 </div>
                 <q-input v-model="emuEmail" dense outlined type="email" label="Email" @keyup.enter="emuSignIn(emuEmail)">
                   <template #append>
-                    <q-btn flat dense round icon="login" @click="emuSignIn(emuEmail)" />
+                    <q-btn flat dense round icon="login" aria-label="以此 Email 登入" @click="emuSignIn(emuEmail)" />
                   </template>
                 </q-input>
               </div>
@@ -110,9 +112,10 @@ const emuEmail = ref('');
 
 const testAccounts = [
   { label: '系統管理員', email: 'admin@example.com' },
-  { label: '護理長', email: 'head@example.com' },
-  { label: '護理師 01', email: 'nurse01@example.com' },
-  { label: '護理師 02', email: 'nurse02@example.com' },
+  { label: '護理長（5A、ICU）', email: 'head@example.com' },
+  { label: '護理師 01（5A）', email: 'nurse01@example.com' },
+  { label: '護理師 02（5A）', email: 'nurse02@example.com' },
+  { label: '護理師 31（ICU）', email: 'nurse31@example.com' },
 ];
 
 watch(
@@ -148,38 +151,50 @@ async function switchAccount(): Promise<void> {
 <style scoped lang="scss">
 .login-page {
   min-height: 100vh;
-  background:
-    radial-gradient(1200px 500px at 10% -10%, rgba(15, 110, 114, 0.18), transparent 60%),
-    radial-gradient(900px 500px at 110% 110%, rgba(224, 122, 95, 0.16), transparent 60%),
-    #f4f6f8;
+  min-height: 100dvh;
+  background: var(--page);
 }
 .login-card {
   width: 380px;
   max-width: 100%;
-  border-radius: 18px;
-  border: 1px solid #e3e8ec;
-  box-shadow: 0 18px 50px rgba(16, 42, 67, 0.08);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  box-shadow: var(--card-shadow);
 }
+.login-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: normal;
+}
+// The product mark keeps the brand teal in both appearances.
 .brand-mark {
   width: 64px;
   height: 64px;
-  border-radius: 18px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0b5f63, #13807f);
-  box-shadow: 0 8px 20px rgba(15, 110, 114, 0.35);
+  background: #0f6e72;
+  color: #fff;
 }
+// Google's sign-in button: neutral light theme, and the dark theme in dark mode.
 .google-btn {
   background: #fff;
   color: #3c4043;
   border: 1px solid #dadce0;
   height: 46px;
   font-weight: 500;
-  font-size: 15px;
+  font-size: 0.9375rem;
+}
+body.body--dark .google-btn {
+  background: #131314;
+  color: #e3e3e3;
+  border-color: #8e918f;
 }
 .emu-box {
-  border: 1px dashed #f0b27a;
+  border: 1px dashed var(--warn);
   border-radius: 10px;
 }
 </style>

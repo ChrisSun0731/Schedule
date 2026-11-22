@@ -11,7 +11,7 @@
  *   coverage_under      D/E/N headcount below demand (weekday D10 E6 N5 · weekend/holiday D8 E6 N5)
  *   senior_min          fewer than `minSeniorPerShift` N2+ nurses on a shift
  *   max_consecutive_work more than 5 consecutive working days (previous period tail included)
- *   max_consecutive_off  more than 3 consecutive non-working days, unless the run contains AL/OL
+ *   max_consecutive_off  more than 3 consecutive non-working days, unless the run contains leave (AL/OL/SL…)
  *   weekly_off          fewer than 1 rest day (OFF/REQ) in a fixed 7-day week (例假)
  *   period_off          fewer than 8 rest days in the 28-day period (例假 4 + 休息日 4)
  *   shift_rest          less than `minRestHours` between shifts on consecutive days (勞基法 §34)
@@ -19,11 +19,17 @@
  * Soft rules (severity "warning"/"info"):
  *   coverage_over, senior_preferred, under_hours (+ pattern costs that are never reported).
  *
- * Leave priority: AL (年休) > OL (公假) > REQ (預假), then first-come-first-served.
+ * Leave priority (see LEAVE_PRIORITY): statutory leave (病假、生理假、喪假、婚假、產假、陪產假、公傷假)
+ * is always placed; the rest competes for spare staff as AL 年休 > OL 公假 > CO 補休 > PL 事假 > REQ 預假,
+ * then first-come-first-served.
  */
 import { SHIFT_META } from '@/constants/labels';
 import {
+  LEAVE_PRIORITY,
+  SHIFT_CODES,
   WEEK_DAYS,
+  isLeaveDay,
+  isStatutoryLeave,
   type DayInfo,
   type LeaveRequest,
   type LeaveType,
@@ -142,7 +148,7 @@ export interface SolveInput {
   /** Existing assignments; only cells listed in `locks` are kept. */
   assignments?: Record<string, ReadonlyArray<ShiftCode | null | undefined> | undefined>;
   locks?: Record<string, number[]>;
-  /** Approved leave requests to place (priority AL > OL > REQ). */
+  /** Approved leave requests to place (in LEAVE_PRIORITY order). */
   leaveRequests?: LeaveRequest[];
   seed?: number;
   timeLimitMs?: number;
@@ -170,16 +176,16 @@ export interface SolveResult {
 // Encoding
 // ---------------------------------------------------------------------------
 
-const CODES: readonly ShiftCode[] = ['D', 'E', 'N', 'OFF', 'AL', 'OL', 'REQ'];
-const CODE_INDEX: Record<ShiftCode, number> = { D: 0, E: 1, N: 2, OFF: 3, AL: 4, OL: 5, REQ: 6 };
+/** D/E/N/OFF are 0–3 (see SHIFT_CODES); everything after is rest (REQ) or leave. */
+const CODES: readonly ShiftCode[] = SHIFT_CODES;
+const CODE_INDEX = Object.fromEntries(CODES.map((c, i) => [c, i])) as Record<ShiftCode, number>;
 const WORK: readonly WorkShift[] = ['D', 'E', 'N'];
-const OFF = 3;
-const AL = 4;
-const OL = 5;
-const REQ = 6;
+const OFF = CODE_INDEX.OFF;
+const REQ = CODE_INDEX.REQ;
+const LEAVE_CODE = CODES.map(isLeaveDay);
 
 const isWork = (c: number) => c <= 2;
-const isLeave = (c: number) => c === AL || c === OL;
+const isLeave = (c: number) => LEAVE_CODE[c] === true;
 const isRest = (c: number) => c === OFF || c === REQ;
 
 function parseHours(hm: string): number {
@@ -592,7 +598,7 @@ function worse(a: Severity | undefined, b: Severity): Severity {
 }
 
 function emptyCounts(): Record<ShiftCode, number> {
-  return { D: 0, E: 0, N: 0, OFF: 0, AL: 0, OL: 0, REQ: 0 };
+  return Object.fromEntries(CODES.map((c) => [c, 0])) as Record<ShiftCode, number>;
 }
 
 function evaluateModel(m: Model, g: Int8Array): EvaluationResult {
@@ -609,7 +615,7 @@ function evaluateModel(m: Model, g: Int8Array): EvaluationResult {
     nurseStats[m.ids[n]!] = {
       work: counts.D + counts.E + counts.N,
       rest: counts.OFF + counts.REQ,
-      leave: counts.AL + counts.OL,
+      leave: CODES.reduce((sum, c, i) => sum + (isLeave(i) ? counts[c] : 0), 0),
       counts,
       errors: mine.filter((v) => v.severity === 'error').length,
       warnings: mine.filter((v) => v.severity === 'warning').length,
@@ -678,10 +684,8 @@ export function newErrors(before: EvaluationResult, after: EvaluationResult): Vi
 }
 
 // ---------------------------------------------------------------------------
-// Leave planning (AL > OL > REQ)
+// Leave planning (statutory leave first, then AL > OL > CO > PL > REQ)
 // ---------------------------------------------------------------------------
-
-const LEAVE_PRIORITY: Record<LeaveType, number> = { AL: 0, OL: 1, REQ: 2 };
 
 export function planLeave(params: {
   days: DayInfo[];
@@ -743,7 +747,7 @@ export function planLeave(params: {
     let hasLeave = false;
     const check = (i: number) => {
       const code = cells[id]?.[i] ?? fixed[id]?.[i];
-      if (code === 'AL' || code === 'OL') hasLeave = true;
+      if (isLeaveDay(code)) hasLeave = true;
     };
     for (let i = d - 1; isOffAt(id, i); i--) {
       run++;
@@ -789,14 +793,17 @@ export function planLeave(params: {
       }
       const senior = isSenior(rules, nurse.level);
       let reason: string | undefined;
-      if (available[d]! - 1 < dayNeed[d]!) reason = '當日人力不足';
-      else if (senior && availableSenior[d]! - 1 < seniorNeed[d]!) reason = '當日 N2+ 人力不足';
-      else if (req.type !== 'REQ' && capacity - 1 < totalDemand) reason = '四週總人力不足';
-      else if (req.type === 'REQ') {
-        if ((reqCount.get(nurse.id) ?? 0) >= rules.minOffPerPeriod) reason = `預假超過 ${rules.minOffPerPeriod} 天`;
-        else {
-          const { run, hasLeave } = leaveRunIfPlaced(nurse.id, d);
-          if (run > rules.maxConsecutiveOff && !hasLeave) reason = `連續休假超過 ${rules.maxConsecutiveOff} 天`;
+      // Statutory leave cannot be refused: always place it and let the coverage rules flag the gap.
+      if (!isStatutoryLeave(req.type)) {
+        if (available[d]! - 1 < dayNeed[d]!) reason = '當日人力不足';
+        else if (senior && availableSenior[d]! - 1 < seniorNeed[d]!) reason = '當日 N2+ 人力不足';
+        else if (req.type !== 'REQ' && capacity - 1 < totalDemand) reason = '四週總人力不足';
+        else if (req.type === 'REQ') {
+          if ((reqCount.get(nurse.id) ?? 0) >= rules.minOffPerPeriod) reason = `預假超過 ${rules.minOffPerPeriod} 天`;
+          else {
+            const { run, hasLeave } = leaveRunIfPlaced(nurse.id, d);
+            if (run > rules.maxConsecutiveOff && !hasLeave) reason = `連續休假超過 ${rules.maxConsecutiveOff} 天`;
+          }
         }
       }
       if (reason) {
@@ -949,7 +956,7 @@ export function solveSchedule(input: SolveInput, onProgress?: (p: SolveProgress)
     fixed[nurse.id] = row;
   }
 
-  // 2. Approved leave with priority AL > OL > REQ.
+  // 2. Approved leave in LEAVE_PRIORITY order.
   const leave = planLeave({ days, nurses, rules, requests: input.leaveRequests ?? [], fixed });
 
   const g = new Int8Array(nN * nD).fill(OFF);

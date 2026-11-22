@@ -1,53 +1,34 @@
 <template>
   <q-page class="page-pad">
-    <div class="row items-center q-mb-md q-gutter-sm">
-      <q-icon name="tune" size="26px" color="primary" />
-      <div class="page-title">系統設定</div>
+    <div class="page-head q-mb-md">
+      <h1 class="page-title">系統設定</h1>
       <q-space />
-      <q-btn flat no-caps color="grey-8" icon="restart_alt" label="還原預設規則" @click="resetRules" />
-      <q-btn unelevated no-caps color="primary" icon="save" label="儲存" :loading="saving" :disable="!dirty" @click="save" />
+      <span v-if="!dirty" class="text-caption text-muted">所有變更已儲存</span>
+      <q-btn flat no-caps color="muted" icon="restart_alt" label="還原預設規則" @click="resetRules" />
+      <q-btn unelevated no-caps color="primary" icon="save" label="儲存變更" :loading="saving" :disable="!dirty" @click="save" />
     </div>
 
     <div class="settings-grid">
-      <!-- Ward -->
+      <!-- E-mail -->
       <q-card flat bordered class="section">
         <q-card-section>
-          <div class="section-title"><q-icon name="apartment" />病房</div>
-          <q-input v-model="form.wardName" outlined dense label="病房名稱" class="q-mb-sm" />
+          <div class="section-title"><q-icon name="outgoing_mail" />通知信</div>
           <q-input v-model="form.portalUrl" outlined dense label="系統網址（Email 連結）" :placeholder="settingsStore.portalUrl" class="q-mb-sm" />
           <q-input v-model="form.emailSenderName" outlined dense label="寄件者名稱" />
-          <q-toggle v-model="form.requireHeadApproval" class="q-mt-sm" color="primary" label="換班一律需護理長核准" />
         </q-card-section>
       </q-card>
 
-      <!-- Demand -->
+      <!-- Wards & seniority -->
       <q-card flat bordered class="section">
         <q-card-section>
-          <div class="section-title"><q-icon name="groups" />每日人力需求</div>
-          <table class="demand-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th v-for="s in WORK_SHIFTS" :key="s"><ShiftPill :code="s" dense /></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>平日（一至五）</td>
-                <td v-for="s in WORK_SHIFTS" :key="s"><q-input v-model.number="form.weekdayDemand[s]" type="number" min="0" dense outlined /></td>
-              </tr>
-              <tr>
-                <td>週末 / 國定假日</td>
-                <td v-for="s in WORK_SHIFTS" :key="s"><q-input v-model.number="form.weekendDemand[s]" type="number" min="0" dense outlined /></td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="section-title q-mt-md"><q-icon name="workspace_premium" />資深人力（每班）</div>
-          <div class="row q-col-gutter-sm">
-            <q-input v-model.number="form.minSeniorPerShift" class="col-6" type="number" min="0" outlined dense label="最少" />
-            <q-input v-model.number="form.preferredSeniorPerShift" class="col-6" type="number" min="0" outlined dense label="建議" />
-          </div>
-          <div class="row q-gutter-sm q-mt-xs">
+          <div class="section-title"><q-icon name="apartment" />病房與人力</div>
+          <p class="text-body2 text-muted q-mb-sm">
+            每個病房的名稱、每日人力需求、資深人力人數與換班核准方式，由系統管理員或該病房護理長在「病房」頁設定。
+          </p>
+          <q-btn outline no-caps color="primary" icon="apartment" label="前往病房" :to="{ name: 'wards' }" class="q-mb-md" />
+          <div class="section-title"><q-icon name="workspace_premium" />資深人力職級</div>
+          <div class="text-caption text-muted q-mb-xs">各病房的資深人力規則以這些職級計算</div>
+          <div class="row q-gutter-sm">
             <q-checkbox v-for="lv in NURSE_LEVELS" :key="lv" v-model="form.seniorLevels" :val="lv" :label="lv" dense />
           </div>
         </q-card-section>
@@ -67,11 +48,12 @@
           <div class="section-title q-mt-md"><q-icon name="schedule" />班別時間</div>
           <div v-for="s in WORK_SHIFTS" :key="s" class="row items-center q-col-gutter-sm q-mb-xs">
             <div class="col-auto"><ShiftPill :code="s" /></div>
-            <q-input v-model="form.shiftTimes[s].start" class="col" mask="##:##" outlined dense label="開始" />
-            <q-input v-model="form.shiftTimes[s].end" class="col" mask="##:##" outlined dense label="結束" />
+            <q-input v-model="form.shiftTimes[s].start" class="col" mask="##:##" inputmode="numeric" outlined dense label="開始" :aria-label="`${SHIFT_META[s].label}開始時間`" />
+            <q-input v-model="form.shiftTimes[s].end" class="col" mask="##:##" inputmode="numeric" outlined dense label="結束" :aria-label="`${SHIFT_META[s].label}結束時間`" />
           </div>
-          <div class="row q-gutter-xs q-mt-sm">
-            <q-chip v-for="t in forbidden" :key="t" dense color="red-1" text-color="negative" icon="block" class="q-ml-none">{{ t }}</q-chip>
+          <div v-if="forbidden.length" class="row items-center q-gutter-xs q-mt-sm">
+            <span class="text-caption text-muted">輪班間隔不足而禁止：</span>
+            <q-chip v-for="t in forbidden" :key="t" dense color="error-soft" text-color="negative" icon="block" class="q-ml-none">{{ t }}</q-chip>
           </div>
         </q-card-section>
       </q-card>
@@ -86,14 +68,15 @@
               :key="h"
               removable
               dense
-              color="red-1"
-              text-color="negative"
+              color="soft"
+              text-color="ink"
               class="q-ml-none"
+              :remove-aria-label="`移除 ${formatYMD(h)}`"
               @remove="form.holidays = form.holidays.filter((x) => x !== h)"
             >
               {{ formatYMD(h) }}（{{ weekdayLabel(h) }}）
             </q-chip>
-            <span v-if="!form.holidays.length" class="text-caption text-grey-6">—</span>
+            <span v-if="!form.holidays.length" class="text-caption text-muted">尚未設定國定假日，在下方月曆點選日期即可加入。</span>
           </div>
           <q-date
             v-model="holidayPicker"
@@ -115,6 +98,7 @@
 import { computed, ref, watch } from 'vue';
 import { Notify } from 'quasar';
 import ShiftPill from '@/components/ShiftPill.vue';
+import { SHIFT_META } from '@/constants/labels';
 import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
@@ -168,35 +152,28 @@ async function save(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  // min() keeps a single column from overflowing a 320px-wide phone.
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: 16px;
   max-width: 1200px;
 }
 .section {
   border-radius: 12px;
-  background: #fff;
 }
 .section-title {
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: 700;
-  color: #3e4c59;
+  color: var(--text-2);
   margin-bottom: 10px;
-}
-.demand-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 4px;
-  td:first-child {
-    font-size: 13px;
-    color: #52606d;
-    white-space: nowrap;
-  }
-  th {
-    text-align: center;
-  }
 }
 </style>

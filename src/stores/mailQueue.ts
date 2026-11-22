@@ -13,6 +13,7 @@ import type { Schedule } from '@/types/schedule';
 import { scheduleDays } from '@/utils/scheduleHelpers';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
+import { useWardsStore } from '@/stores/wards';
 
 /**
  * App-wide e-mail queue. Jobs survive closing dialogs so a global banner can keep
@@ -62,13 +63,14 @@ export const useMailQueueStore = defineStore('mailQueue', () => {
       .filter((n): n is NonNullable<typeof n> => !!n?.email)
       .map((nurse) => {
         const mail = renderScheduleEmail({
-          wardName: settings.settings.wardName,
+          wardName: useWardsStore().nameOf(schedule.wardId),
           nurse,
           row: schedule.assignments[nurse.id] ?? [],
           days,
           startDate: schedule.startDate,
           endDate: schedule.endDate,
           portalUrl: settings.portalUrl,
+          scheduleId: schedule.id,
         });
         return { ...mail, to: nurse.email, toName: nurse.name, type: 'schedule' as const, scheduleId: schedule.id };
       });

@@ -24,16 +24,27 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { LEAVE_TYPES } from '@/types/schedule';
 
 const PROJECT = 'demo-nursing-schedule';
-const SID = '2026-12-07';
-const DRAFT = '2027-01-04';
+const W1 = 'w1';
+const W2 = 'w2';
+const SID = `${W1}_2026-12-07`;
+const DRAFT = `${W1}_2027-01-04`;
 const A = 'a@test.com';
 const B = 'b@test.com';
 const C = 'c@test.com';
+/** Nurse on ward 2. */
+const D = 'd@test.com';
 const DEV = 'dev@test.com';
+/** Manages ward 1 only. */
 const HEAD = 'head@test.com';
+/** Manages ward 2 only. */
+const HEAD2 = 'head2@test.com';
 const BOOT = 'boot@test.com';
+
+/** `FIRESTORE_EMULATOR_HOST` is set by `firebase emulators:exec` (any port). */
+const [EMU_HOST, EMU_PORT] = (process.env.FIRESTORE_EMULATOR_HOST ?? '127.0.0.1:8080').split(':') as [string, string];
 
 let env: RulesTestEnvironment;
 
@@ -49,6 +60,7 @@ function user(email: string, role: string, extra: Record<string, unknown> = {}) 
     displayName: email.split('@')[0],
     employeeId: email.toUpperCase().slice(0, 3),
     role,
+    wardIds: role === 'developer' ? [] : [W1],
     level: 'N2',
     allowedShifts: ['D', 'E', 'N'],
     schedulable: role !== 'developer',
@@ -57,11 +69,26 @@ function user(email: string, role: string, extra: Record<string, unknown> = {}) 
   };
 }
 
-function schedule(id: string, status: string) {
+function ward(id: string, extra: Record<string, unknown> = {}) {
   return {
     id,
-    startDate: id,
-    endDate: id,
+    name: `Ward ${id}`,
+    order: 1,
+    weekdayDemand: { D: 2, E: 1, N: 1 },
+    weekendDemand: { D: 1, E: 1, N: 1 },
+    minSeniorPerShift: 1,
+    preferredSeniorPerShift: 2,
+    requireHeadApproval: false,
+    ...extra,
+  };
+}
+
+function schedule(wardId: string, startDate: string, status: string) {
+  return {
+    id: `${wardId}_${startDate}`,
+    wardId,
+    startDate,
+    endDate: startDate,
     status,
     nurseOrder: [A, B, C],
     nurses: {},
@@ -78,6 +105,7 @@ function schedule(id: string, status: string) {
 
 const SWAP = {
   scheduleId: SID,
+  wardId: W1,
   requesterId: A,
   requesterName: 'a',
   requesterEmployeeId: 'A',
@@ -129,7 +157,7 @@ beforeAll(async () => {
   const rules = readFileSync('firestore.rules', 'utf8').replace("'admin@example.com'", `'${BOOT}'`);
   env = await initializeTestEnvironment({
     projectId: PROJECT,
-    firestore: { rules, host: '127.0.0.1', port: 8080 },
+    firestore: { rules, host: EMU_HOST, port: Number(EMU_PORT) },
   });
 });
 
@@ -143,11 +171,15 @@ beforeEach(async () => {
     const store = ctx.firestore() as unknown as Firestore;
     await setDoc(doc(store, 'users', DEV), user(DEV, 'developer'));
     await setDoc(doc(store, 'users', HEAD), user(HEAD, 'head_nurse'));
+    await setDoc(doc(store, 'users', HEAD2), user(HEAD2, 'head_nurse', { wardIds: [W2] }));
     for (const e of [A, B, C]) await setDoc(doc(store, 'users', e), user(e, 'nurse'));
+    await setDoc(doc(store, 'users', D), user(D, 'nurse', { wardIds: [W2] }));
     await setDoc(doc(store, 'users', 'off@test.com'), user('off@test.com', 'nurse', { active: false }));
-    await setDoc(doc(store, 'settings', 'app'), { requireHeadApproval: false });
-    await setDoc(doc(store, 'schedules', SID), schedule(SID, 'published'));
-    await setDoc(doc(store, 'schedules', DRAFT), schedule(DRAFT, 'draft'));
+    await setDoc(doc(store, 'settings', 'app'), {});
+    await setDoc(doc(store, 'wards', W1), ward(W1));
+    await setDoc(doc(store, 'wards', W2), ward(W2));
+    await setDoc(doc(store, 'schedules', SID), schedule(W1, '2026-12-07', 'published'));
+    await setDoc(doc(store, 'schedules', DRAFT), schedule(W1, '2027-01-04', 'draft'));
     await setDoc(doc(store, 'swap_requests', 's1'), SWAP);
   });
 });
@@ -187,8 +219,15 @@ describe('users', () => {
 
   it('only developers can write settings', async () => {
     await assertSucceeds(getDoc(doc(db(A), 'settings', 'app')));
-    await assertFails(setDoc(doc(db(HEAD), 'settings', 'app'), { requireHeadApproval: true }));
-    await assertSucceeds(setDoc(doc(db(DEV), 'settings', 'app'), { requireHeadApproval: true }));
+    await assertFails(setDoc(doc(db(HEAD), 'settings', 'app'), { minRestHours: 0 }));
+    await assertSucceeds(setDoc(doc(db(DEV), 'settings', 'app'), { minRestHours: 0 }));
+  });
+
+  it('only developers assign wards', async () => {
+    await assertFails(updateDoc(doc(db(HEAD), 'users', D), { wardIds: [W1] }));
+    await assertFails(updateDoc(doc(db(A), 'users', A), { wardIds: [W1, W2] }));
+    await assertSucceeds(updateDoc(doc(db(DEV), 'users', D), { wardIds: [W1] }));
+    await assertFails(updateDoc(doc(db(DEV), 'users', D), { wardIds: 'w1' }));
   });
 });
 
@@ -204,7 +243,7 @@ describe('schedules', () => {
   it('nurses cannot edit cells, create or delete schedules', async () => {
     const store = db(A);
     await assertFails(updateDoc(doc(store, 'schedules', SID), new FieldPath('assignments', A), rowOf('OFF OFF OFF OFF OFF OFF OFF')));
-    await assertFails(setDoc(doc(store, 'schedules', '2027-02-01'), schedule('2027-02-01', 'draft')));
+    await assertFails(setDoc(doc(store, 'schedules', `${W1}_2027-02-01`), schedule(W1, '2027-02-01', 'draft')));
     await assertFails(deleteDoc(doc(store, 'schedules', DRAFT)));
   });
 
@@ -213,8 +252,8 @@ describe('schedules', () => {
     await assertSucceeds(updateDoc(doc(store, 'schedules', SID), new FieldPath('assignments', A), ROW_C));
     await assertSucceeds(updateDoc(doc(store, 'schedules', DRAFT), { status: 'published' }));
     await assertFails(deleteDoc(doc(store, 'schedules', SID)));
-    await assertSucceeds(setDoc(doc(store, 'schedules', '2027-02-01'), schedule('2027-02-01', 'draft')));
-    await assertSucceeds(deleteDoc(doc(store, 'schedules', '2027-02-01')));
+    await assertSucceeds(setDoc(doc(store, 'schedules', `${W1}_2027-02-01`), schedule(W1, '2027-02-01', 'draft')));
+    await assertSucceeds(deleteDoc(doc(store, 'schedules', `${W1}_2027-02-01`)));
     await assertSucceeds(deleteDoc(doc(db(DEV), 'schedules', SID)));
   });
 });
@@ -247,9 +286,9 @@ describe('swap approval by the target nurse', () => {
     await assertFails(approveBatch(B));
   });
 
-  it('requires head-nurse approval when configured', async () => {
+  it("requires head-nurse approval when the swap's ward is configured so", async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore() as unknown as Firestore, 'settings', 'app'), { requireHeadApproval: true });
+      await updateDoc(doc(ctx.firestore() as unknown as Firestore, 'wards', W1), { requireHeadApproval: true });
     });
     await assertFails(approveBatch(B));
     await assertSucceeds(
@@ -317,18 +356,31 @@ describe('swap requests', () => {
     await assertFails(addDoc(collection(db(C), 'swap_requests'), { ...SWAP }));
     await assertFails(addDoc(collection(db(C), 'swap_requests'), { ...SWAP, requesterId: C, scheduleId: DRAFT }));
     await assertFails(addDoc(collection(db(C), 'swap_requests'), { ...SWAP, requesterId: C, status: 'approved' }));
+    // the ward must be the schedule's
+    await assertFails(addDoc(collection(db(C), 'swap_requests'), { ...SWAP, requesterId: C, requesterEmail: C, wardId: W2 }));
   });
 });
 
 describe('leave requests', () => {
   it('nurses file pending leave for themselves only; managers decide', async () => {
-    const base = { nurseId: A, nurseName: 'a', type: 'AL', startDate: '2026-12-10', endDate: '2026-12-11', note: '', createdAt: 1, updatedAt: 1 };
+    const base = { wardId: W1, nurseId: A, nurseName: 'a', type: 'AL', startDate: '2026-12-10', endDate: '2026-12-11', note: '', createdAt: 1, updatedAt: 1 };
     await assertSucceeds(setDoc(doc(db(A), 'leave_requests', 'l1'), { ...base, status: 'pending' }));
     await assertFails(setDoc(doc(db(A), 'leave_requests', 'l2'), { ...base, status: 'approved' }));
     await assertFails(setDoc(doc(db(A), 'leave_requests', 'l3'), { ...base, nurseId: B, status: 'pending' }));
     await assertFails(updateDoc(doc(db(A), 'leave_requests', 'l1'), { status: 'approved' }));
     await assertSucceeds(updateDoc(doc(db(HEAD), 'leave_requests', 'l1'), { status: 'approved', decidedBy: HEAD }));
     await assertFails(getDoc(doc(db(B), 'leave_requests', 'l1')));
+    // filed under a ward the nurse is not on
+    await assertFails(setDoc(doc(db(A), 'leave_requests', 'l4'), { ...base, wardId: W2, status: 'pending' }));
+  });
+
+  it('accepts every leave type and nothing else', async () => {
+    const base = { wardId: W1, nurseId: A, nurseName: 'a', startDate: '2026-12-10', endDate: '2026-12-10', note: '', status: 'pending', createdAt: 1, updatedAt: 1 };
+    for (const type of LEAVE_TYPES) {
+      await assertSucceeds(setDoc(doc(db(A), 'leave_requests', `t-${type}`), { ...base, type }));
+    }
+    await assertFails(setDoc(doc(db(A), 'leave_requests', 't-D'), { ...base, type: 'D' }));
+    await assertFails(setDoc(doc(db(A), 'leave_requests', 't-XX'), { ...base, type: 'XX' }));
   });
 });
 
@@ -346,5 +398,101 @@ describe('mail queue & e-mail logs', () => {
     await assertSucceeds(addDoc(collection(db(A), 'email_logs'), log));
     await assertFails(addDoc(collection(db(A), 'email_logs'), { ...log, type: 'schedule' }));
     await assertSucceeds(addDoc(collection(db(HEAD), 'email_logs'), { ...log, type: 'schedule', sentBy: HEAD }));
+  });
+});
+
+describe('wards: each head nurse manages only their own wards', () => {
+  it('registered users read wards; only developers create, rename and delete them', async () => {
+    await assertSucceeds(getDoc(doc(db(A), 'wards', W1)));
+    await assertFails(getDoc(doc(db('stranger@test.com'), 'wards', W1)));
+    await assertFails(setDoc(doc(db(HEAD), 'wards', 'w3'), ward('w3')));
+    await assertSucceeds(setDoc(doc(db(DEV), 'wards', 'w3'), ward('w3')));
+    await assertFails(setDoc(doc(db(DEV), 'wards', 'w4'), ward('w5')));
+    await assertFails(setDoc(doc(db(DEV), 'wards', 'w4'), ward('w4', { name: '' })));
+    await assertFails(updateDoc(doc(db(HEAD), 'wards', W1), { name: 'renamed', updatedAt: 2 }));
+    await assertSucceeds(updateDoc(doc(db(DEV), 'wards', W1), { name: 'renamed' }));
+    await assertFails(deleteDoc(doc(db(HEAD), 'wards', 'w3')));
+    await assertSucceeds(deleteDoc(doc(db(DEV), 'wards', 'w3')));
+  });
+
+  it('a head nurse tunes staffing and swap policy of their own ward only', async () => {
+    const patch = { weekdayDemand: { D: 3, E: 2, N: 2 }, requireHeadApproval: true, updatedAt: 2, updatedBy: HEAD };
+    await assertSucceeds(updateDoc(doc(db(HEAD), 'wards', W1), patch));
+    await assertFails(updateDoc(doc(db(HEAD), 'wards', W2), patch));
+    await assertFails(updateDoc(doc(db(HEAD), 'wards', W1), { weekdayDemand: { D: -1, E: 2, N: 2 } }));
+    await assertFails(updateDoc(doc(db(A), 'wards', W1), patch));
+  });
+
+  it("another ward's head nurse cannot see drafts or edit, publish or delete schedules", async () => {
+    await assertFails(getDoc(doc(db(HEAD2), 'schedules', DRAFT)));
+    // Published rosters stay readable by all staff, as before.
+    await assertSucceeds(getDoc(doc(db(HEAD2), 'schedules', SID)));
+    await assertFails(updateDoc(doc(db(HEAD2), 'schedules', SID), new FieldPath('assignments', A), ROW_C));
+    await assertFails(updateDoc(doc(db(HEAD2), 'schedules', DRAFT), { status: 'published' }));
+    await assertFails(deleteDoc(doc(db(HEAD2), 'schedules', DRAFT)));
+    await assertFails(setDoc(doc(db(HEAD2), 'schedules', `${W1}_2027-02-01`), schedule(W1, '2027-02-01', 'draft')));
+    await assertSucceeds(setDoc(doc(db(HEAD2), 'schedules', `${W2}_2027-02-01`), schedule(W2, '2027-02-01', 'draft')));
+  });
+
+  it('a head nurse can list their own wards but not the whole collection', async () => {
+    await assertSucceeds(getDocs(query(collection(db(HEAD), 'schedules'), where('wardId', '==', W1))));
+    await assertFails(getDocs(query(collection(db(HEAD), 'schedules'), where('wardId', '==', W2))));
+    await assertFails(getDocs(collection(db(HEAD), 'schedules')));
+    await assertSucceeds(getDocs(collection(db(DEV), 'schedules')));
+    await assertSucceeds(
+      getDocs(query(collection(db(D), 'schedules'), where('wardId', '==', W2), where('status', '==', 'published'))),
+    );
+  });
+
+  it('a schedule cannot move to another ward, use a mismatched id or name a missing ward', async () => {
+    await assertFails(updateDoc(doc(db(HEAD), 'schedules', DRAFT), { wardId: W2 }));
+    await assertFails(setDoc(doc(db(HEAD), 'schedules', '2027-02-01'), { ...schedule(W1, '2027-02-01', 'draft'), id: '2027-02-01' }));
+    await assertFails(setDoc(doc(db(DEV), 'schedules', 'w9_2027-02-01'), schedule('w9', '2027-02-01', 'draft')));
+  });
+
+  it("swap and leave decisions stay with the ward's own head nurse", async () => {
+    await assertSucceeds(getDoc(doc(db(HEAD), 'swap_requests', 's1')));
+    await assertFails(getDoc(doc(db(HEAD2), 'swap_requests', 's1')));
+    await assertFails(updateDoc(doc(db(HEAD2), 'swap_requests', 's1'), { status: 'rejected', updatedAt: 3 }));
+    await assertFails(updateDoc(doc(db(HEAD), 'swap_requests', 's1'), { wardId: W2 }));
+    await assertSucceeds(updateDoc(doc(db(HEAD), 'swap_requests', 's1'), { status: 'rejected', updatedAt: 3 }));
+    await assertSucceeds(getDocs(query(collection(db(HEAD), 'swap_requests'), where('wardId', '==', W1))));
+    await assertFails(getDocs(query(collection(db(HEAD2), 'swap_requests'), where('wardId', '==', W1))));
+
+    const leave = {
+      wardId: W1,
+      nurseId: A,
+      nurseName: 'a',
+      type: 'AL',
+      startDate: '2026-12-10',
+      endDate: '2026-12-10',
+      note: '',
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore() as unknown as Firestore, 'leave_requests', 'l1'), leave);
+    });
+    await assertFails(getDoc(doc(db(HEAD2), 'leave_requests', 'l1')));
+    await assertFails(updateDoc(doc(db(HEAD2), 'leave_requests', 'l1'), { status: 'approved' }));
+    await assertFails(deleteDoc(doc(db(HEAD2), 'leave_requests', 'l1')));
+    await assertFails(updateDoc(doc(db(HEAD), 'leave_requests', 'l1'), { wardId: W2 }));
+    await assertSucceeds(updateDoc(doc(db(HEAD), 'leave_requests', 'l1'), { status: 'approved', decidedBy: HEAD }));
+    // A head nurse enters leave only for nurses on a ward they manage.
+    await assertSucceeds(setDoc(doc(db(HEAD2), 'leave_requests', 'l2'), { ...leave, wardId: W2, nurseId: D, status: 'approved' }));
+    await assertFails(setDoc(doc(db(HEAD2), 'leave_requests', 'l3'), { ...leave, wardId: W2, status: 'approved' }));
+    await assertFails(setDoc(doc(db(HEAD2), 'leave_requests', 'l4'), { ...leave, status: 'approved' }));
+  });
+
+  it('developers can still read and remove schedules from before wards existed', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const { wardId: _unused, ...legacy } = schedule(W1, '2026-11-09', 'draft');
+      await setDoc(doc(ctx.firestore() as unknown as Firestore, 'schedules', '2026-11-09'), { ...legacy, id: '2026-11-09' });
+    });
+    await assertFails(getDoc(doc(db(HEAD), 'schedules', '2026-11-09')));
+    await assertFails(deleteDoc(doc(db(HEAD), 'schedules', '2026-11-09')));
+    await assertSucceeds(getDoc(doc(db(DEV), 'schedules', '2026-11-09')));
+    await assertSucceeds(deleteDoc(doc(db(DEV), 'schedules', '2026-11-09')));
   });
 });

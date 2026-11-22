@@ -79,6 +79,7 @@ export const useAuthStore = defineStore('auth', () => {
             displayName: u.displayName || (mail.split('@')[0] ?? mail),
             employeeId: '',
             role: 'developer',
+            wardIds: [],
             level: 'N3',
             allowedShifts: ['D', 'E', 'N'],
             schedulable: false,

@@ -9,7 +9,7 @@
 import { defineConfig } from '#q-app';
 
 export default defineConfig(() => ({
-  boot: ['auth'],
+  boot: ['ui', 'auth'],
 
   css: ['app.scss'],
 
@@ -49,6 +49,8 @@ export default defineConfig(() => ({
   framework: {
     config: {
       notify: { position: 'top', timeout: 2500 },
+      // Follow the OS light/dark setting; there is deliberately no in-app appearance switch.
+      dark: 'auto',
     },
     lang: 'zh-TW',
     iconSet: 'material-icons',

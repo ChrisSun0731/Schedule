@@ -5,7 +5,7 @@
         <q-icon name="auto_fix_high" color="primary" size="24px" class="q-mr-sm" />
         <div class="text-h6">自動排班</div>
         <q-space />
-        <q-chip dense outline color="grey-8">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
+        <q-chip dense outline color="muted" class="gt-xs">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
       </q-card-section>
 
       <!-- Options -->
@@ -34,15 +34,16 @@
           </q-item>
         </q-list>
 
-        <div class="text-caption text-grey-7 q-mt-md q-mb-xs">運算時間</div>
+        <div id="gen-quality" class="text-caption text-muted q-mt-md q-mb-xs">運算時間</div>
         <q-btn-toggle
           v-model="quality"
           spread
           no-caps
           unelevated
           toggle-color="primary"
-          color="grey-2"
-          text-color="grey-9"
+          color="soft"
+          text-color="ink"
+          aria-labelledby="gen-quality"
           :options="[
             { label: '快速 2 秒', value: 'fast' },
             { label: '標準 6 秒', value: 'normal' },
@@ -51,14 +52,14 @@
         />
 
         <div class="row q-gutter-xs q-mt-md">
-          <q-chip v-for="r in ruleChips" :key="r" dense color="teal-1" text-color="teal-10" class="q-ml-none">{{ r }}</q-chip>
+          <q-chip v-for="r in ruleChips" :key="r" dense color="tint" text-color="on-tint" class="q-ml-none">{{ r }}</q-chip>
         </div>
       </q-card-section>
 
       <!-- Running -->
       <q-card-section v-if="running" class="q-py-lg">
-        <q-linear-progress :value="progress" color="primary" size="10px" rounded class="q-mb-sm" />
-        <div class="row text-caption text-grey-7 tabular">
+        <q-linear-progress :value="progress" color="primary" size="10px" rounded class="q-mb-sm" aria-label="自動排班進度" />
+        <div class="row text-caption text-muted tabular" aria-live="polite">
           <span>{{ Math.round(progress * 100) }}%</span>
           <q-space />
           <span>{{ iterations.toLocaleString() }} 次嘗試</span>
@@ -67,15 +68,13 @@
 
       <!-- Result -->
       <q-card-section v-if="result" class="q-pt-none">
-        <div class="row q-col-gutter-sm">
-          <div v-for="tile in resultTiles" :key="tile.label" class="col-3">
-            <div class="result-tile" :class="tile.cls">
-              <q-icon :name="tile.icon" size="18px" />
-              <div class="text-h6 tabular">{{ tile.value }}</div>
-              <div class="text-caption">{{ tile.label }}</div>
-            </div>
-          </div>
-        </div>
+        <p class="result-line tabular" aria-live="polite">
+          <span v-for="(part, i) in resultParts" :key="part.text" class="result-part" :class="part.cls">
+            <span v-if="i" class="sep" aria-hidden="true">·</span>
+            <q-icon :name="part.icon" size="18px" />
+            {{ part.text }}
+          </span>
+        </p>
 
         <q-list v-if="result.evaluation.errorCount" dense bordered class="rounded-borders q-mt-md">
           <q-item v-for="(v, i) in result.evaluation.violations.filter((x) => x.severity === 'error').slice(0, 5)" :key="i">
@@ -89,7 +88,7 @@
           dense
           icon="event_busy"
           :label="`未排入的請假 ${bumped.length} 天`"
-          header-class="text-orange-10 q-px-none"
+          header-class="text-on-warn q-px-none"
           class="q-mt-sm"
         >
           <q-list dense>
@@ -105,9 +104,9 @@
       </q-card-section>
 
       <q-card-actions align="right">
-        <q-btn v-if="running" flat no-caps color="grey-8" label="停止" @click="cancel" />
+        <q-btn v-if="running" flat no-caps color="muted" label="停止" @click="cancel" />
         <template v-else>
-          <q-btn flat no-caps color="grey-8" label="取消" @click="close(false)" />
+          <q-btn flat no-caps color="muted" label="取消" @click="close(false)" />
           <q-btn v-if="result" flat no-caps color="primary" icon="refresh" label="重新產生" @click="run" />
           <q-btn v-if="result" unelevated no-caps color="primary" icon="done" label="套用至班表" :loading="applying" @click="apply" />
           <q-btn v-else unelevated no-caps color="primary" icon="play_arrow" label="開始排班" @click="run" />
@@ -125,6 +124,7 @@ import { errorMessage } from '@/services/firebase';
 import { solveInWorker, type SolverJob } from '@/services/solverClient';
 import { useAuthStore } from '@/stores/auth';
 import { useSchedulesStore } from '@/stores/schedules';
+import { snapshotOf, type Snapshot } from '@/composables/useScheduleUndo';
 import type { LeaveRequest, RuleConfig, Schedule } from '@/types/schedule';
 import { formatMDW, formatPeriod } from '@/utils/dates';
 import { historyFrom, plannerNurses, scheduleDays } from '@/utils/scheduleHelpers';
@@ -137,7 +137,11 @@ const props = defineProps<{
   rules: RuleConfig;
   leaveRequests: LeaveRequest[];
 }>();
-const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
+const emit = defineEmits<{
+  'update:modelValue': [v: boolean];
+  /** The result was written; `before` lets the page offer undo. */
+  applied: [before: Snapshot, after: Snapshot];
+}>();
 
 const auth = useAuthStore();
 const schedules = useSchedulesStore();
@@ -187,15 +191,17 @@ const ruleChips = computed(() => {
 
 const bumped = computed(() => result.value?.leave.placements.filter((p) => p.status !== 'placed') ?? []);
 
-const resultTiles = computed(() => {
+/** Result summary, e.g. 「0 項錯誤 · 3 項警告 · 請假 12/14 排入 · 6.0 秒」. */
+const resultParts = computed(() => {
   const r = result.value;
   if (!r) return [];
   const placed = r.leave.placements.filter((p) => p.status === 'placed').length;
+  const e = r.evaluation;
   return [
-    { label: '錯誤', value: r.evaluation.errorCount, icon: 'error', cls: r.evaluation.errorCount ? 'tile-bad' : 'tile-good' },
-    { label: '警告', value: r.evaluation.warningCount, icon: 'warning', cls: r.evaluation.warningCount ? 'tile-warn' : 'tile-good' },
-    { label: '請假排入', value: `${placed}/${placed + bumped.value.length}`, icon: 'event_available', cls: bumped.value.length ? 'tile-warn' : 'tile-good' },
-    { label: '秒', value: (r.elapsedMs / 1000).toFixed(1), icon: 'timer', cls: '' },
+    { text: `${e.errorCount} 項錯誤`, icon: e.errorCount ? 'error' : 'task_alt', cls: e.errorCount ? 'text-negative' : 'text-positive' },
+    { text: `${e.warningCount} 項警告`, icon: 'warning', cls: e.warningCount ? 'text-on-warn' : 'text-muted' },
+    { text: `請假 ${placed}/${placed + bumped.value.length} 排入`, icon: 'event_available', cls: bumped.value.length ? 'text-on-warn' : 'text-muted' },
+    { text: `${(r.elapsedMs / 1000).toFixed(1)} 秒`, icon: 'timer', cls: 'text-muted' },
   ];
 });
 
@@ -238,9 +244,11 @@ function cancel(): void {
 async function apply(): Promise<void> {
   if (!result.value) return;
   applying.value = true;
+  const before = snapshotOf(props.schedule);
   try {
     await schedules.applyGenerated(props.schedule, result.value.assignments, result.value.locks, auth.email);
-    Notify.create({ type: 'positive', icon: 'check', message: '已套用自動排班結果' });
+    emit('applied', before, { assignments: result.value.assignments, locks: result.value.locks });
+    Notify.create({ type: 'positive', icon: 'check', message: '已套用自動排班結果，可按工具列的復原還原' });
     emit('update:modelValue', false);
   } catch (err) {
     Notify.create({ type: 'negative', message: errorMessage(err) });
@@ -256,23 +264,22 @@ function close(v: boolean): void {
 </script>
 
 <style scoped lang="scss">
-.result-tile {
-  border-radius: 10px;
-  padding: 8px;
-  text-align: center;
-  background: #f4f6f8;
-  color: #52606d;
+.result-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
-.tile-good {
-  background: #e6f6ec;
-  color: #1f7a45;
+.result-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
-.tile-warn {
-  background: #fff4db;
-  color: #9a6700;
-}
-.tile-bad {
-  background: #ffe3e3;
-  color: #c92a2a;
+.sep {
+  margin: 0 8px;
+  color: var(--text-3);
 }
 </style>

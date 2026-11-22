@@ -20,16 +20,17 @@
           >
             {{ SWAP_STATUS_META[s.status].label }}
           </q-chip>
-          <span class="text-caption text-grey-7 ellipsis">{{ formatDateTime(s.createdAt) }}</span>
+          <q-chip v-if="showWard" dense outline color="muted" icon="apartment" class="q-ma-none ward-chip">{{ wards.nameOf(s.wardId) }}</q-chip>
+          <span class="text-caption text-muted ellipsis">{{ formatDateTime(s.createdAt) }}</span>
           <q-space />
-          <q-icon
+          <span
             v-if="s.emailStatus"
-            :name="s.emailStatus === 'sent' ? 'mark_email_read' : 'mark_email_unread'"
-            :color="s.emailStatus === 'sent' ? 'positive' : 'negative'"
-            size="18px"
+            class="row items-center no-wrap text-caption"
+            :class="s.emailStatus === 'sent' ? 'text-positive' : 'text-negative'"
           >
-            <q-tooltip>{{ s.emailStatus === 'sent' ? '通知信已送出' : '通知信寄送失敗' }}</q-tooltip>
-          </q-icon>
+            <q-icon :name="s.emailStatus === 'sent' ? 'mark_email_read' : 'mark_email_unread'" size="18px" class="q-mr-xs" />
+            <span :class="{ 'gt-xs': s.emailStatus === 'sent' }">{{ s.emailStatus === 'sent' ? '已通知' : '通知信寄送失敗' }}</span>
+          </span>
         </div>
 
         <div class="swap-row q-mt-sm">
@@ -81,8 +82,10 @@
       </q-card-actions>
     </q-card>
 
-    <div v-if="!items.length" class="empty text-center text-grey-6 q-py-xl">
-      <q-icon name="inbox" size="40px" />
+    <div v-if="!items.length" class="empty-state">
+      <q-icon name="inbox" size="40px" class="text-subtle" />
+      <div class="empty-title q-mt-sm">{{ emptyText }}</div>
+      <slot name="empty-action" />
     </div>
   </div>
 </template>
@@ -95,20 +98,25 @@ import { SWAP_STATUS_META } from '@/constants/labels';
 import { errorMessage } from '@/services/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { useSchedulesStore } from '@/stores/schedules';
-import { useSettingsStore } from '@/stores/settings';
 import { useSwapsStore } from '@/stores/swaps';
+import { useWardsStore } from '@/stores/wards';
 import type { SwapRequest } from '@/types/schedule';
 import { formatDateTime, formatMDW } from '@/utils/dates';
 import { checkSwap } from '@/utils/scheduleHelpers';
 
-const props = defineProps<{ items: SwapRequest[]; highlightId?: string | null }>();
+const props = withDefaults(defineProps<{ items: SwapRequest[]; highlightId?: string | null; emptyText?: string }>(), {
+  highlightId: null,
+  emptyText: '沒有換班申請',
+});
 
 type ActionKey = 'approve' | 'reject' | 'cancel' | 'decide-approve' | 'decide-reject';
 
 const auth = useAuthStore();
 const schedules = useSchedulesStore();
-const settings = useSettingsStore();
+const wards = useWardsStore();
 const swaps = useSwapsStore();
+/** Label each request with its ward when the user deals with several wards. */
+const showWard = computed(() => wards.mine.length > 1);
 const busyId = ref<string | null>(null);
 
 const pending = (s: SwapRequest) => s.status === 'pending_target' || s.status === 'pending_head';
@@ -119,7 +127,7 @@ const checks = computed(() => {
   for (const s of props.items) {
     if (!pending(s)) continue;
     const schedule = schedules.list.find((x) => x.id === s.scheduleId);
-    if (schedule) map.set(s.id, checkSwap(schedule, s, settings.rules, schedules.previousOf(schedule)));
+    if (schedule) map.set(s.id, checkSwap(schedule, s, wards.rulesFor(schedule.wardId), schedules.previousOf(schedule)));
   }
   return map;
 });
@@ -140,21 +148,22 @@ function actionsFor(s: SwapRequest) {
   if (s.status === 'pending_target' && s.targetId === auth.email) {
     out.push({ key: 'reject', label: '拒絕', icon: 'close', color: 'negative', primary: false });
     out.push({ key: 'approve', label: '同意', icon: 'check', color: 'positive', primary: true });
-  } else if (auth.isManager) {
+  } else if (wards.canManage(s.wardId)) {
     out.push({ key: 'decide-reject', label: '駁回', icon: 'close', color: 'negative', primary: false });
     out.push({ key: 'decide-approve', label: '核准', icon: 'verified', color: 'primary', primary: true });
   }
-  if (s.requesterId === auth.email) out.unshift({ key: 'cancel', label: '撤回', icon: 'undo', color: 'grey-8', primary: false });
+  if (s.requesterId === auth.email) out.unshift({ key: 'cancel', label: '撤回', icon: 'undo', color: 'muted', primary: false });
   return out;
 }
 
-function askNote(title: string): Promise<string | null> {
+/** Rejecting asks for an optional reply; the button is named for the action, never 「確定」. */
+function askNote(title: string, ok: string): Promise<string | null> {
   return new Promise((resolve) => {
     Dialog.create({
       title,
       prompt: { model: '', type: 'text', outlined: true, dense: true, label: '回覆（選填）' },
-      cancel: { flat: true, label: '取消', color: 'grey-8' },
-      ok: { unelevated: true, label: '確定', color: 'primary' },
+      cancel: { flat: true, noCaps: true, label: '取消', color: 'muted' },
+      ok: { unelevated: true, noCaps: true, label: ok, color: 'negative' },
     })
       .onOk((v: string) => resolve(v ?? ''))
       .onCancel(() => resolve(null));
@@ -164,7 +173,7 @@ function askNote(title: string): Promise<string | null> {
 async function run(s: SwapRequest, key: ActionKey): Promise<void> {
   let note = '';
   if (key === 'reject' || key === 'decide-reject') {
-    const v = await askNote('拒絕換班');
+    const v = key === 'reject' ? await askNote('拒絕換班', '拒絕') : await askNote('駁回換班', '駁回');
     if (v === null) return;
     note = v;
   }
@@ -173,8 +182,8 @@ async function run(s: SwapRequest, key: ActionKey): Promise<void> {
       Dialog.create({
         title: '核准換班',
         message: `換班後有 ${warningsFor(s).length} 項規則問題，仍要核准？`,
-        cancel: { flat: true, label: '取消', color: 'grey-8' },
-        ok: { unelevated: true, label: '核准', color: 'primary' },
+        cancel: { flat: true, noCaps: true, label: '取消', color: 'muted' },
+        ok: { unelevated: true, noCaps: true, label: '仍要核准', color: 'primary' },
       })
         .onOk(() => resolve(true))
         .onCancel(() => resolve(false)),
@@ -207,10 +216,17 @@ async function run(s: SwapRequest, key: ActionKey): Promise<void> {
 <style scoped lang="scss">
 .swap-card {
   border-radius: 12px;
-  transition: box-shadow 0.3s;
   &.highlight {
-    box-shadow: 0 0 0 2px #0f6e72;
+    box-shadow: 0 0 0 2px var(--focus);
   }
+  @media (prefers-reduced-motion: no-preference) {
+    transition: box-shadow 0.3s;
+  }
+}
+.ward-chip {
+  max-width: 12rem;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .swap-row {
   display: flex;
@@ -224,26 +240,26 @@ async function run(s: SwapRequest, key: ActionKey): Promise<void> {
   font-weight: 600;
   .emp {
     font-weight: 400;
-    font-size: 11px;
-    color: #9aa5b1;
+    font-size: 0.75rem;
+    color: var(--text-3);
     margin-left: 6px;
   }
 }
 .quote {
-  font-size: 13px;
-  color: #52606d;
+  font-size: 0.8125rem;
+  color: var(--text-2);
   padding: 6px 10px;
-  border-left: 3px solid #0f6e72;
-  background: #f6f9f9;
+  border-left: 3px solid var(--focus);
+  background: var(--surface-2);
   border-radius: 0 6px 6px 0;
   &.reply {
-    border-left-color: #9aa5b1;
+    border-left-color: var(--line-strong);
   }
 }
 .warn-box {
-  font-size: 12px;
-  color: #8a5a00;
-  background: #fff8e6;
+  font-size: 0.75rem;
+  color: var(--on-warn);
+  background: var(--warn-soft);
   border-radius: 8px;
   padding: 6px 10px;
 }

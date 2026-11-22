@@ -11,6 +11,7 @@ import {
   updateDoc,
   where,
   type DocumentData,
+  type Query,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '@/services/firebase';
@@ -18,10 +19,13 @@ import type { NurseSnapshot, Schedule, ShiftCode, UserProfile } from '@/types/sc
 import { PERIOD_DAYS } from '@/types/schedule';
 import { addDays, holidayIndexesFor, nextMonday, periodEnd, todayISO } from '@/utils/dates';
 import { emptyRow } from '@/utils/scheduleHelpers';
+import { scheduleIdOf } from '@/utils/wards';
+import { useWardsStore } from '@/stores/wards';
 
 export function normalizeSchedule(id: string, data: DocumentData): Schedule {
   return {
     id,
+    wardId: typeof data.wardId === 'string' ? data.wardId : '',
     startDate: data.startDate ?? id,
     endDate: data.endDate ?? periodEnd(id),
     status: data.status === 'published' ? 'published' : 'draft',
@@ -52,81 +56,145 @@ export function snapshotOf(u: UserProfile): NurseSnapshot {
   };
 }
 
-const SELECTED_KEY = 'nursing-schedule:selected';
+const SELECTED_KEY = 'nursing-schedule:selected-by-ward';
 
-function readSelected(): string | null {
+function readSelected(): Record<string, string> {
   try {
-    return localStorage.getItem(SELECTED_KEY);
+    const v = JSON.parse(localStorage.getItem(SELECTED_KEY) ?? '{}') as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, string>) : {};
   } catch {
-    return null;
+    return {};
   }
 }
 
+/** Which schedules to listen to (Firestore rules only allow queries they can prove). */
+export type ScheduleScope =
+  /** Developers: every ward, drafts included (also finds pre-ward schedules to migrate). */
+  | { kind: 'all' }
+  /** Head nurses: drafts and published of `managed`, published of `member`. */
+  | { kind: 'wards'; managed: string[]; member: string[] };
+
 export const useSchedulesStore = defineStore('schedules', () => {
-  const list = ref<Schedule[]>([]);
-  const loaded = ref(false);
-  const selectedId = ref<string | null>(readSelected());
-  let unsub: Unsubscribe | null = null;
+  /** Snapshot per listener, merged into `list`. */
+  const parts = ref<Record<string, Schedule[]>>({});
+  const pending = ref(0);
+  /** Selected period per ward. */
+  const selectedByWard = ref<Record<string, string>>(readSelected());
+  let unsubs: Unsubscribe[] = [];
+
+  /** Every schedule the user can see, newest first. */
+  const list = computed(() => {
+    const byId = new Map<string, Schedule>();
+    for (const part of Object.values(parts.value)) for (const s of part) byId.set(s.id, s);
+    return [...byId.values()].sort((a, b) => b.startDate.localeCompare(a.startDate) || a.wardId.localeCompare(b.wardId));
+  });
+  const loaded = computed(() => pending.value === 0);
+
+  function start(scope: ScheduleScope): void {
+    stop();
+    const col = collection(db(), 'schedules');
+    const listen = (key: string, q: Query<DocumentData>) => {
+      pending.value++;
+      let first = true;
+      const settle = () => {
+        if (!first) return;
+        first = false;
+        pending.value--;
+      };
+      unsubs.push(
+        onSnapshot(
+          q,
+          (snap) => {
+            parts.value = { ...parts.value, [key]: snap.docs.map((d) => normalizeSchedule(d.id, d.data())) };
+            settle();
+          },
+          // e.g. a head nurse whose ward was just unassigned – show what is left instead of spinning.
+          settle,
+        ),
+      );
+    };
+    if (scope.kind === 'all') {
+      listen('all', col);
+      return;
+    }
+    const managed = new Set(scope.managed);
+    for (const w of managed) listen(`m:${w}`, query(col, where('wardId', '==', w)));
+    for (const w of new Set(scope.member)) {
+      if (!managed.has(w)) listen(`p:${w}`, query(col, where('wardId', '==', w), where('status', '==', 'published')));
+    }
+  }
+
+  function stop(): void {
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    parts.value = {};
+    pending.value = 0;
+  }
+
+  /** Schedules of one ward, newest first. */
+  function ofWard(wardId: string | null | undefined): Schedule[] {
+    return wardId ? list.value.filter((s) => s.wardId === wardId) : [];
+  }
+
+  const wardList = computed(() => ofWard(useWardsStore().current?.id));
+
+  /** The period running today, else the next one, else the latest. */
+  function defaultFor(wardId: string | null | undefined): Schedule | null {
+    const items = ofWard(wardId);
+    const today = todayISO();
+    return (
+      items.find((s) => s.startDate <= today && today <= s.endDate) ??
+      [...items].reverse().find((s) => s.startDate > today) ??
+      items[0] ??
+      null
+    );
+  }
+
+  const current = computed<Schedule | null>(() => {
+    const wardId = useWardsStore().current?.id;
+    if (!wardId) return null;
+    const picked = selectedByWard.value[wardId];
+    return wardList.value.find((s) => s.id === picked) ?? defaultFor(wardId);
+  });
+  const selectedId = computed(() => current.value?.id ?? null);
 
   function select(id: string | null): void {
-    selectedId.value = id;
+    const s = id ? list.value.find((x) => x.id === id) : null;
+    const wardId = s?.wardId ?? useWardsStore().current?.id;
+    if (!wardId) return;
+    const next = { ...selectedByWard.value };
+    if (s) next[wardId] = s.id;
+    else delete next[wardId];
+    selectedByWard.value = next;
     try {
-      if (id) localStorage.setItem(SELECTED_KEY, id);
+      localStorage.setItem(SELECTED_KEY, JSON.stringify(next));
     } catch {
       /* storage unavailable */
     }
   }
 
-  function defaultSelection(): string | null {
-    const today = todayISO();
-    const current = list.value.find((s) => s.startDate <= today && today <= s.endDate);
-    if (current) return current.id;
-    const upcoming = [...list.value].reverse().find((s) => s.startDate > today);
-    return upcoming?.id ?? list.value[0]?.id ?? null;
-  }
-
-  function start(isManager: boolean): void {
-    stop();
-    const ref = isManager
-      ? collection(db(), 'schedules')
-      : query(collection(db(), 'schedules'), where('status', '==', 'published'));
-    unsub = onSnapshot(ref, (snap) => {
-      list.value = snap.docs
-        .map((d) => normalizeSchedule(d.id, d.data()))
-        .sort((a, b) => b.startDate.localeCompare(a.startDate));
-      loaded.value = true;
-      if (!selectedId.value || !list.value.some((s) => s.id === selectedId.value)) select(defaultSelection());
-    });
-  }
-
-  function stop(): void {
-    unsub?.();
-    unsub = null;
-    list.value = [];
-    loaded.value = false;
-  }
-
-  const current = computed(() => list.value.find((s) => s.id === selectedId.value) ?? null);
-
+  /** The same ward's period that ends the day before `s` starts (for 7-day carry-over). */
   function previousOf(s: Schedule | null): Schedule | null {
     if (!s) return null;
-    return list.value.find((x) => addDays(x.endDate, 1) === s.startDate) ?? null;
+    return list.value.find((x) => x.wardId === s.wardId && addDays(x.endDate, 1) === s.startDate) ?? null;
   }
 
-  /** Suggested start date for a new period: day after the latest period, else next Monday. */
-  const suggestedStart = computed(() => {
-    const latest = list.value[0];
+  /** Suggested start date for a ward's new period: day after its latest period, else next Monday. */
+  function suggestedStartFor(wardId: string | null | undefined): string {
+    const latest = ofWard(wardId)[0];
     return latest ? addDays(latest.endDate, 1) : nextMonday();
-  });
+  }
 
   function ref_(id: string) {
     return doc(db(), 'schedules', id);
   }
 
-  async function create(startDate: string, nurses: UserProfile[], holidayDates: string[], by: string): Promise<string> {
+  async function create(wardId: string, startDate: string, nurses: UserProfile[], holidayDates: string[], by: string): Promise<string> {
     const now = Date.now();
+    const id = scheduleIdOf(wardId, startDate);
     const data: Schedule = {
-      id: startDate,
+      id,
+      wardId,
       startDate,
       endDate: periodEnd(startDate),
       status: 'draft',
@@ -144,9 +212,11 @@ export const useSchedulesStore = defineStore('schedules', () => {
       publishedAt: null,
       publishedBy: null,
     };
-    await setDoc(ref_(startDate), data);
-    select(startDate);
-    return startDate;
+    await setDoc(ref_(id), data);
+    // The listener may not have delivered the new document yet; remember the choice anyway.
+    selectedByWard.value = { ...selectedByWard.value, [wardId]: id };
+    select(id);
+    return id;
   }
 
   /** Set one cell. Manual edits are locked by default so auto-scheduling keeps them. */
@@ -191,6 +261,16 @@ export const useSchedulesStore = defineStore('schedules', () => {
     await updateDoc(ref_(s.id), { assignments, locks, generatedAt: now, updatedAt: now, updatedBy: by });
   }
 
+  /** Put back an earlier assignments/locks state (undo, redo). Unlike applyGenerated it keeps generatedAt. */
+  async function restore(
+    s: Schedule,
+    assignments: Record<string, ShiftCode[]>,
+    locks: Record<string, number[]>,
+    by: string,
+  ): Promise<void> {
+    await updateDoc(ref_(s.id), { assignments, locks, updatedAt: Date.now(), updatedBy: by });
+  }
+
   async function toggleHoliday(s: Schedule, day: number, by: string): Promise<void> {
     const set = new Set(s.holidays);
     if (set.has(day)) set.delete(day);
@@ -212,8 +292,12 @@ export const useSchedulesStore = defineStore('schedules', () => {
     if (selectedId.value === s.id) select(null);
   }
 
-  /** Add schedulable staff missing from the schedule and refresh name/level snapshots. */
-  async function syncRoster(s: Schedule, users: UserProfile[], by: string): Promise<{ added: number }> {
+  /**
+   * Add the ward's schedulable staff missing from the schedule and refresh name/level snapshots.
+   * `users` is every known user; only those on `roster` are added as new rows.
+   */
+  async function syncRoster(s: Schedule, users: UserProfile[], roster: UserProfile[], by: string): Promise<{ added: number }> {
+    const onRoster = new Set(roster.map((u) => u.id));
     const nurseOrder = [...s.nurseOrder];
     const nurses = { ...s.nurses };
     const assignments = { ...s.assignments };
@@ -223,7 +307,7 @@ export const useSchedulesStore = defineStore('schedules', () => {
         nurses[u.id] = snapshotOf(u);
         continue;
       }
-      if (!u.active || !u.schedulable) continue;
+      if (!onRoster.has(u.id)) continue;
       nurseOrder.push(u.id);
       nurses[u.id] = snapshotOf(u);
       assignments[u.id] = emptyRow();
@@ -252,10 +336,13 @@ export const useSchedulesStore = defineStore('schedules', () => {
 
   return {
     list,
+    wardList,
     loaded,
     selectedId,
     current,
-    suggestedStart,
+    ofWard,
+    defaultFor,
+    suggestedStartFor,
     periodDays: PERIOD_DAYS,
     select,
     start,
@@ -266,6 +353,7 @@ export const useSchedulesStore = defineStore('schedules', () => {
     setLock,
     clearLocks,
     applyGenerated,
+    restore,
     toggleHoliday,
     publish,
     unpublish,

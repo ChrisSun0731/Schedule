@@ -5,29 +5,22 @@
         <q-icon name="campaign" color="primary" size="24px" class="q-mr-sm" />
         <div class="text-h6">{{ alreadyPublished ? '重新通知' : '發布並通知' }}</div>
         <q-space />
-        <q-chip dense outline color="grey-8">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
+        <q-chip dense outline color="muted" class="gt-xs">{{ formatPeriod(schedule.startDate, schedule.endDate) }}</q-chip>
       </q-card-section>
 
       <!-- Confirm -->
       <template v-if="phase === 'confirm'">
         <q-card-section class="q-pt-none">
-          <div class="row q-col-gutter-sm">
-            <div class="col-4">
-              <div class="tile"><q-icon name="groups" color="primary" /><div class="text-h6 tabular">{{ recipients.total }}</div><div class="text-caption">人員</div></div>
-            </div>
-            <div class="col-4">
-              <div class="tile"><q-icon name="alternate_email" color="primary" /><div class="text-h6 tabular">{{ recipients.withEmail }}</div><div class="text-caption">Email</div></div>
-            </div>
-            <div class="col-4">
-              <div class="tile" :class="{ bad: evaluation.errorCount }">
-                <q-icon :name="evaluation.errorCount ? 'error' : 'task_alt'" :color="evaluation.errorCount ? 'negative' : 'positive'" />
-                <div class="text-h6 tabular">{{ evaluation.errorCount }}</div>
-                <div class="text-caption">規則錯誤</div>
-              </div>
-            </div>
-          </div>
+          <p class="summary tabular">
+            <q-icon name="groups" size="20px" class="text-muted" />
+            {{ recipients.total }} 位人員 · {{ recipients.withEmail }} 位有 Email
+          </p>
+          <p v-if="!evaluation.errorCount" class="summary text-positive">
+            <q-icon name="task_alt" size="20px" />
+            符合所有排班規則
+          </p>
 
-          <q-banner v-if="evaluation.errorCount" dense rounded class="bg-red-1 text-negative q-mt-md">
+          <q-banner v-if="evaluation.errorCount" dense rounded class="bg-error-soft text-negative q-mt-sm">
             <template #avatar><q-icon name="report" /></template>
             仍有 {{ evaluation.errorCount }} 項違規
             <template #action>
@@ -44,14 +37,14 @@
           </q-item>
           <q-item v-if="recipients.missing.length" class="q-px-none">
             <q-item-section avatar><q-icon name="warning" color="warning" class="q-ml-sm" /></q-item-section>
-            <q-item-section caption class="text-caption text-grey-8">
+            <q-item-section class="text-caption text-muted">
               無 Email：{{ recipients.missing.join('、') }}
             </q-item-section>
           </q-item>
         </q-card-section>
 
         <q-card-actions align="right">
-          <q-btn v-close-popup flat no-caps color="grey-8" label="取消" />
+          <q-btn v-close-popup flat no-caps color="muted" label="取消" />
           <q-btn
             unelevated
             no-caps
@@ -68,7 +61,7 @@
       <!-- Sending -->
       <template v-else>
         <q-card-section class="q-pt-none">
-          <div class="row items-center q-mb-xs tabular">
+          <div class="row items-center q-mb-xs tabular" aria-live="polite">
             <q-icon
               :name="mail.broadcastStats.pending ? 'outgoing_mail' : mail.broadcastStats.failed ? 'mark_email_unread' : 'mark_email_read'"
               :color="mail.broadcastStats.pending ? 'primary' : mail.broadcastStats.failed ? 'warning' : 'positive'"
@@ -77,10 +70,11 @@
             />
             <span class="text-subtitle2">{{ mail.broadcastStats.sent + mail.broadcastStats.failed }} / {{ mail.broadcastStats.total }}</span>
             <q-space />
-            <q-chip dense color="positive" text-color="white" icon="check">{{ mail.broadcastStats.sent }}</q-chip>
-            <q-chip v-if="mail.broadcastStats.failed" dense color="negative" text-color="white" icon="close">{{ mail.broadcastStats.failed }}</q-chip>
+            <q-chip dense color="positive" text-color="white" icon="check">已送出 {{ mail.broadcastStats.sent }}</q-chip>
+            <q-chip v-if="mail.broadcastStats.failed" dense color="negative" text-color="white" icon="close">失敗 {{ mail.broadcastStats.failed }}</q-chip>
           </div>
           <q-linear-progress
+            aria-label="寄送進度"
             :value="mail.broadcastStats.progress"
             :color="mail.broadcastStats.failed ? 'warning' : 'positive'"
             size="10px"
@@ -176,20 +170,18 @@ async function submit(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.tile {
-  border: 1px solid #e3e8ec;
-  border-radius: 10px;
-  padding: 8px;
-  text-align: center;
-  &.bad {
-    background: #fff5f5;
-    border-color: #ffc9c9;
-  }
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+  font-weight: 500;
 }
 .delivery-box {
   max-height: 46vh;
   overflow: auto;
-  border: 1px solid #e3e8ec;
+  border: 1px solid var(--line);
   border-radius: 10px;
 }
 </style>

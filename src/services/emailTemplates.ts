@@ -2,7 +2,7 @@
  * Traditional Chinese e-mail templates (HTML with inline styles + plain-text fallback).
  */
 import { SHIFT_META, SWAP_STATUS_META } from '@/constants/labels';
-import type { DayInfo, NurseSnapshot, ShiftCode, SwapRequest, SwapStatus } from '@/types/schedule';
+import { SHIFT_CODES, isLeaveDay, isWorkShift, type DayInfo, type NurseSnapshot, type ShiftCode, type SwapRequest, type SwapStatus } from '@/types/schedule';
 import { formatMDW, formatPeriod, weekdayLabel, formatMD } from '@/utils/dates';
 
 export interface RenderedEmail {
@@ -34,8 +34,17 @@ function layout(title: string, body: string, footer: string): string {
 </table></td></tr></table></body></html>`;
 }
 
-function button(href: string, label: string): string {
-  return `<a href="${escapeHtml(href)}" style="display:inline-block;background:#0f6e72;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;">${escapeHtml(label)}</a>`;
+function button(href: string, label: string, variant: 'primary' | 'secondary' = 'primary', extraStyle = ''): string {
+  const colors =
+    variant === 'primary'
+      ? 'background:#0f6e72;color:#ffffff;border:1px solid #0f6e72;'
+      : 'background:#ffffff;color:#0f6e72;border:1px solid #0f6e72;';
+  return `<a href="${escapeHtml(href)}" style="display:inline-block;${colors}text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;${extraStyle}">${escapeHtml(label)}</a>`;
+}
+
+/** Side-by-side buttons that wrap on narrow screens. */
+function buttonRow(buttons: { href: string; label: string; variant?: 'primary' | 'secondary' }[]): string {
+  return `<p style="margin:0;">${buttons.map((b) => button(b.href, b.label, b.variant, 'margin:0 8px 8px 0;')).join('')}</p>`;
 }
 
 function shiftBadge(code: ShiftCode | undefined): string {
@@ -51,6 +60,11 @@ export function portalLink(portalUrl: string, route: string): string {
   return `${base}#${route}`;
 }
 
+/** Portal page that adds the recipient's shifts of a schedule to their Google Calendar. */
+export function calendarLink(portalUrl: string, scheduleId: string): string {
+  return portalLink(portalUrl, `/calendar?schedule=${encodeURIComponent(scheduleId)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Monthly (28-day) schedule
 // ---------------------------------------------------------------------------
@@ -63,14 +77,17 @@ export function renderScheduleEmail(p: {
   startDate: string;
   endDate: string;
   portalUrl: string;
+  /** Used for the "加入 Google 日曆" link. */
+  scheduleId: string;
 }): RenderedEmail {
   const period = formatPeriod(p.startDate, p.endDate);
-  const counts: Record<ShiftCode, number> = { D: 0, E: 0, N: 0, OFF: 0, AL: 0, OL: 0, REQ: 0 };
+  const counts = Object.fromEntries(SHIFT_CODES.map((c) => [c, 0])) as Record<ShiftCode, number>;
   p.row.forEach((c) => counts[c]++);
   const work = counts.D + counts.E + counts.N;
   const rest = counts.OFF + counts.REQ;
-  const leave = counts.AL + counts.OL;
+  const leave = SHIFT_CODES.filter(isLeaveDay).reduce((sum, c) => sum + counts[c], 0);
   const swapUrl = portalLink(p.portalUrl, '/swaps');
+  const calendarUrl = calendarLink(p.portalUrl, p.scheduleId);
   const subject = `【${p.wardName}】${period} 個人班表`;
 
   const weeks: string[] = [];
@@ -87,8 +104,10 @@ export function renderScheduleEmail(p: {
   const stat = (label: string, value: number, color = '#1f2933') =>
     `<td align="center" style="padding:8px 4px;"><div style="font-size:22px;font-weight:700;color:${color};">${value}</div><div style="font-size:12px;color:#7b8794;">${label}</div></td>`;
 
-  const distribution = (['D', 'E', 'N', 'AL', 'OL', 'REQ'] as const)
-    .filter((c) => counts[c] > 0 || c === 'D' || c === 'E' || c === 'N')
+  // Work shifts always; rest / leave codes only when this nurse has them.
+  const legendCodes = SHIFT_CODES.filter((c) => isWorkShift(c) || c === 'OFF' || counts[c] > 0);
+  const distribution = legendCodes
+    .filter((c) => c !== 'OFF')
     .map((c) => `${shiftBadge(c)} <span style="font-size:13px;color:#52606d;margin-right:10px;">${SHIFT_META[c].label} ${counts[c]} 天</span>`)
     .join(' ');
 
@@ -100,8 +119,12 @@ ${stat('上班', work, '#0f6e72')}${stat('休假', rest)}${stat('請假', leave)
 </tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:12px;">${weeks.join('')}</table>
 <p style="margin:0 0 20px;line-height:2;">${distribution}</p>
-<p style="margin:0 0 8px;">${button(swapUrl, '登入系統申請換班')}</p>
-<p style="margin:12px 0 0;font-size:12px;color:#9aa5b1;">D 白班 ${'·'} E 小夜 ${'·'} N 大夜 ${'·'} OFF 休假 ${'·'} AL 年休 ${'·'} OL 公假 ${'·'} REQ 預假</p>`;
+${buttonRow([
+  { href: calendarUrl, label: '加入 Google 日曆' },
+  { href: swapUrl, label: '申請換班', variant: 'secondary' },
+])}
+<p style="margin:4px 0 0;font-size:12px;color:#7b8794;">登入後一鍵把上班與請假日加入您的 Google 日曆；班表異動時再按一次即可更新，不會重複。</p>
+<p style="margin:12px 0 0;font-size:12px;color:#9aa5b1;">${legendCodes.map((c) => `${c} ${SHIFT_META[c].label}`).join(' · ')}</p>`;
 
   const lines = p.days.map((d) => {
     const code = p.row[d.index];
@@ -115,6 +138,7 @@ ${stat('上班', work, '#0f6e72')}${stat('休假', rest)}${stat('請假', leave)
     '',
     ...lines,
     '',
+    `加入 Google 日曆：${calendarUrl}`,
     `申請換班：${swapUrl}`,
     '',
     AUTO_FOOTER,
@@ -203,6 +227,8 @@ export function renderSwapResultEmail(p: {
 }): RenderedEmail {
   const meta = SWAP_STATUS_META[p.status];
   const url = portalLink(p.portalUrl, '/schedule');
+  // An approved swap changes the roster: offer to refresh the recipient's Google Calendar.
+  const calendarUrl = p.status === 'approved' ? calendarLink(p.portalUrl, p.swap.scheduleId) : null;
   const subject = `【換班結果】${meta.label}：${p.swap.requesterName} ↔ ${p.swap.targetName}`;
   const explain: Record<SwapStatus, string> = {
     approved: '換班已核准並更新至班表。',
@@ -222,7 +248,15 @@ export function renderSwapResultEmail(p: {
 ${swapTable(p.swap, p.cells, 'requester')}
 ${warnings}
 ${p.swap.responseNote ? `<p style="margin:0 0 16px;font-size:14px;color:#52606d;">回覆：${escapeHtml(p.swap.responseNote)}</p>` : ''}
-<p style="margin:0;">${button(url, '查看班表')}</p>`;
+${
+  calendarUrl
+    ? `${buttonRow([
+        { href: calendarUrl, label: '更新 Google 日曆' },
+        { href: url, label: '查看班表', variant: 'secondary' },
+      ])}
+<p style="margin:4px 0 0;font-size:12px;color:#7b8794;">若已把班表加入 Google 日曆，按「更新 Google 日曆」即可套用這次換班。</p>`
+    : `<p style="margin:0;">${button(url, '查看班表')}</p>`
+}`;
   const text = [
     `${p.recipientName} 您好：`,
     '',
@@ -230,6 +264,7 @@ ${p.swap.responseNote ? `<p style="margin:0 0 16px;font-size:14px;color:#52606d;
     `${p.swap.requesterName} ${formatMDW(p.swap.requesterDate)} ↔ ${p.swap.targetName} ${formatMDW(p.swap.targetDate)}`,
     ...(p.swap.warnings ?? []).map((w) => `• ${w}`),
     '',
+    ...(calendarUrl ? [`更新 Google 日曆：${calendarUrl}`] : []),
     `查看班表：${url}`,
     '',
     AUTO_FOOTER,

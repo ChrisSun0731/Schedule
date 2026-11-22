@@ -25,6 +25,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'schedule', name: 'schedule', component: () => import('@/pages/SchedulePage.vue') },
       { path: 'swaps', name: 'swaps', component: () => import('@/pages/SwapsPage.vue') },
       { path: 'leave', name: 'leave', component: () => import('@/pages/LeavePage.vue') },
+      /** Landing page of the e-mail "加入 Google 日曆" button (?schedule=<id>). */
+      { path: 'calendar', name: 'calendar', component: () => import('@/pages/CalendarPage.vue') },
+      {
+        path: 'wards',
+        name: 'wards',
+        component: () => import('@/pages/WardsPage.vue'),
+        meta: { roles: ['developer', 'head_nurse'] },
+      },
       {
         path: 'emails',
         name: 'emails',

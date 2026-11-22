@@ -1,6 +1,11 @@
 <template>
-  <span class="shift-pill" :class="meta?.cls" :style="dense ? 'min-width:30px;height:20px;font-size:11px' : ''">
-    {{ meta?.short ?? '—' }}
+  <span
+    class="shift-pill"
+    :class="[meta?.cls, { dense }]"
+    role="img"
+    :aria-label="meta ? `${meta.label}（${meta.short}）` : '未排班'"
+  >
+    <span aria-hidden="true">{{ meta?.short ?? '—' }}</span>
     <q-tooltip v-if="tooltip && meta" :delay="300">{{ meta.label }}</q-tooltip>
   </span>
 </template>
@@ -17,3 +22,11 @@ const props = withDefaults(defineProps<{ code: ShiftCode | null | undefined; den
 
 const meta = computed(() => (props.code ? SHIFT_META[props.code] : null));
 </script>
+
+<style scoped lang="scss">
+.shift-pill.dense {
+  min-width: 1.875rem;
+  height: 1.25rem;
+  font-size: 0.6875rem;
+}
+</style>

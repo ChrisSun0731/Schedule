@@ -17,16 +17,58 @@ export const WEEKS_PER_PERIOD = PERIOD_DAYS / WEEK_DAYS;
 // Shifts, leave & levels
 // ---------------------------------------------------------------------------
 
-/** D 白班, E 小夜, N 大夜, OFF 休假(例假/休息日), AL 年休(特休), OL 公假, REQ 預假 */
-export const SHIFT_CODES = ['D', 'E', 'N', 'OFF', 'AL', 'OL', 'REQ'] as const;
+/**
+ * Cell codes. Stored in Firestore – never rename or reorder the first four (the scheduler
+ * encodes D/E/N/OFF as 0–3).
+ * - Work:  D 白班, E 小夜, N 大夜
+ * - Rest (count toward 例假 / 休息日):  OFF 休假, REQ 預假
+ * - Leave (replaces a working day; never counts as rest):
+ *   AL 年休(特休), OL 公假, SL 病假, PL 事假, MNL 生理假, CO 補休,
+ *   BL 喪假, WL 婚假, MAT 產假, PAT 陪產假(陪產檢及陪產假), IL 公傷假(公傷病假)
+ */
+export const SHIFT_CODES = ['D', 'E', 'N', 'OFF', 'AL', 'OL', 'REQ', 'SL', 'PL', 'MNL', 'CO', 'BL', 'WL', 'MAT', 'PAT', 'IL'] as const;
 export type ShiftCode = (typeof SHIFT_CODES)[number];
 
 export const WORK_SHIFTS = ['D', 'E', 'N'] as const;
 export type WorkShift = (typeof WORK_SHIFTS)[number];
 
-/** Leave types in strict approval priority order: AL > OL > REQ. */
-export const LEAVE_TYPES = ['AL', 'OL', 'REQ'] as const;
+/** Everything a nurse can request on the leave page (display order). */
+export const LEAVE_TYPES = ['AL', 'OL', 'REQ', 'SL', 'PL', 'MNL', 'CO', 'BL', 'WL', 'MAT', 'PAT', 'IL'] as const;
 export type LeaveType = (typeof LEAVE_TYPES)[number];
+
+/**
+ * Placement order of approved leave competing for scarce staff (lower first; ties are
+ * first-come-first-served): statutory leave > AL 年休 > OL 公假 > CO 補休 > PL 事假 > REQ 預假.
+ *
+ * Priority 0 = statutory leave (勞工請假規則、性別平等工作法) the employer may not refuse: once
+ * approved the leave planner always places it, even on a short-staffed day – the shortage then
+ * shows up as a coverage error for the head nurse to fill, instead of rostering a sick nurse.
+ */
+export const LEAVE_PRIORITY: Record<LeaveType, number> = {
+  SL: 0,
+  MNL: 0,
+  BL: 0,
+  WL: 0,
+  MAT: 0,
+  PAT: 0,
+  IL: 0,
+  AL: 1,
+  OL: 2,
+  CO: 3,
+  PL: 4,
+  REQ: 5,
+};
+
+export function isStatutoryLeave(type: LeaveType | null | undefined): boolean {
+  return !!type && LEAVE_PRIORITY[type] === 0;
+}
+
+export const STATUTORY_LEAVE_TYPES: readonly LeaveType[] = LEAVE_TYPES.filter(isStatutoryLeave);
+
+/** Leave that competes for staff, highest priority first. */
+export const DISCRETIONARY_LEAVE_TYPES: readonly LeaveType[] = LEAVE_TYPES.filter((t) => !isStatutoryLeave(t)).sort(
+  (a, b) => LEAVE_PRIORITY[a] - LEAVE_PRIORITY[b],
+);
 
 export const NURSE_LEVELS = ['N0', 'N1', 'N2', 'N3'] as const;
 export type NurseLevel = (typeof NURSE_LEVELS)[number];
@@ -43,9 +85,9 @@ export function isRestDay(code: ShiftCode | null | undefined): boolean {
   return code === 'OFF' || code === 'REQ';
 }
 
-/** AL / OL replace a working day (they do not count as rest days). */
+/** Leave other than REQ replaces a working day (it does not count as a rest day). */
 export function isLeaveDay(code: ShiftCode | null | undefined): boolean {
-  return code === 'AL' || code === 'OL';
+  return !!code && !isWorkShift(code) && !isRestDay(code);
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +101,13 @@ export interface UserProfile {
   displayName: string;
   employeeId: string;
   role: UserRole;
+  /**
+   * Wards (病房單位) this person belongs to.
+   * - nurse: the ward whose roster they are on (normally exactly one);
+   * - head_nurse: every ward they manage – they may schedule, publish and approve only there;
+   * - developer: ignored (developers manage every ward).
+   */
+  wardIds: string[];
   level: NurseLevel;
   /** Shifts this nurse may be assigned to by the auto-scheduler. */
   allowedShifts: WorkShift[];
@@ -110,17 +159,44 @@ export interface RuleConfig {
   shiftTimes: Record<WorkShift, ShiftTime>;
 }
 
+/**
+ * Hospital-wide settings (`settings/app`): labour rules, shift times, holidays, e-mail.
+ * The staffing fields inherited from RuleConfig are only the defaults for a new ward –
+ * each ward keeps its own (see `Ward`).
+ */
 export interface AppSettings extends RuleConfig {
+  /** @deprecated Single-ward installs only; becomes the first ward's name when migrating. */
   wardName: string;
   /** Public URL of the portal used in e-mails. Empty = current origin. */
   portalUrl: string;
   /** ISO dates treated like weekends (weekend staffing demand). */
   holidays: string[];
-  /** Swaps approved by the target nurse still need head-nurse approval. */
+  /** @deprecated Moved to `Ward.requireHeadApproval`; read only when migrating. */
   requireHeadApproval: boolean;
   emailSenderName: string;
   updatedAt?: number;
   updatedBy?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Wards (病房單位)
+// ---------------------------------------------------------------------------
+
+/** Rule fields every ward sets for itself; the rest of RuleConfig is hospital-wide. */
+export const WARD_RULE_KEYS = ['weekdayDemand', 'weekendDemand', 'minSeniorPerShift', 'preferredSeniorPerShift'] as const;
+export type WardRules = Pick<RuleConfig, (typeof WARD_RULE_KEYS)[number]>;
+
+export interface Ward extends WardRules {
+  /** Firestore document id (also a prefix of the ward's schedule ids). */
+  id: string;
+  name: string;
+  /** Menu order (ascending). */
+  order: number;
+  /** Swaps approved by the target nurse still need head-nurse approval. */
+  requireHeadApproval: boolean;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +215,10 @@ export interface NurseSnapshot {
 }
 
 export interface Schedule {
-  /** Equal to the start date (`YYYY-MM-DD`). */
+  /** `${wardId}_${startDate}` (see `scheduleIdOf`). Single-ward installs used the bare start date. */
   id: string;
+  /** Ward this roster belongs to ('' = created before wards existed, see WardsPage migration). */
+  wardId: string;
   startDate: string;
   endDate: string;
   status: ScheduleStatus;
@@ -181,6 +259,8 @@ export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
 export interface LeaveRequest {
   id: string;
+  /** Ward whose head nurse decides the request (the nurse's ward when filed). */
+  wardId: string;
   nurseId: string;
   nurseName: string;
   type: LeaveType;
@@ -199,6 +279,8 @@ export type SwapStatus = 'pending_target' | 'pending_head' | 'approved' | 'rejec
 export interface SwapRequest {
   id: string;
   scheduleId: string;
+  /** Ward of the schedule (copied so head nurses can query their own wards). */
+  wardId: string;
 
   requesterId: string;
   requesterName: string;

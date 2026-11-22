@@ -1,8 +1,191 @@
 // Global styles
 
+// ---------------------------------------------------------------------------
+// Design tokens
+//
+// Light values live on :root; dark values on body.body--dark, which Quasar toggles
+// from the OS setting (framework.config.dark = 'auto'). There is no in-app switch.
+// Contrast is checked for every pair: text ≥ 4.5:1, rings and icons ≥ 3:1.
+// ---------------------------------------------------------------------------
+:root {
+  --page: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #f7f9fa; // table headers and footers
+  --line: #e3e8ec;
+  --line-strong: #8aa1b5; // week separators
+  --text: #1f2933;
+  --text-2: #52606d; // secondary text
+  --text-3: #5f6b78; // ids, ranges; ≥ 4.8:1 on every surface incl. the own-row tint
+  --soft: #e9edf1; // neutral fill (unselected toggles, neutral chips)
+  --tint: #e6f4f3; // brand-tinted fill (own row, selected nav item)
+  --on-tint: #0b4f52;
+  --weekend-bg: #eef1f5;
+  --weekend-fg: #3e4c59;
+  --focus: #0f6e72;
+  --error: #c92a2a;
+  --error-soft: #ffe3e3;
+  --warn: #b45309;
+  --warn-soft: #fff4db;
+  --on-warn: #8a4a00;
+  --ok: #1f7a45;
+  --ok-soft: #e6f6ec;
+  --pending: #8a5a00; // "waiting for someone" status fill (white text)
+  --level: #3e4c59;
+  --on-level: #ffffff;
+  --header-bg: #0f6e72;
+  --header-fg: #ffffff;
+  --header-pill: rgba(0, 0, 0, 0.2);
+  --off-cell: #5f6b78;
+  --card-shadow: 0 18px 50px rgba(16, 42, 67, 0.08);
+
+  // Shifts – background / foreground (kept in sync with SHIFT_META in src/constants/labels.ts,
+  // which e-mail and Excel use). D, E, N run from daylight to dusk to night.
+  --d-bg: #fff3c4;
+  --d-fg: #7a5600;
+  --e-bg: #ffdcc2;
+  --e-fg: #8a3700;
+  --n-bg: #d9defc;
+  --n-fg: #26337f;
+  --off-bg: #eef1f4;
+  --off-fg: #4f5b67;
+  --al-bg: #d3f5df;
+  --al-fg: #14653a;
+  --ol-bg: #d6eefc;
+  --ol-fg: #0b5a85;
+  --req-bg: #efe2fd;
+  --req-fg: #6a2aa6;
+  --sl-bg: #fde0e0;
+  --sl-fg: #a11d1d;
+  --pl-bg: #f5e8d0;
+  --pl-fg: #6e4710;
+  --mnl-bg: #f8def4;
+  --mnl-fg: #8a1f7e;
+  --co-bg: #d3f2ef;
+  --co-fg: #0c5d56;
+  --bl-bg: #dcd8d3;
+  --bl-fg: #35302b;
+  --wl-bg: #fde1ec;
+  --wl-fg: #9c1850;
+  --mat-bg: #fde4d6;
+  --mat-fg: #93330f;
+  --pat-bg: #e4f2d0;
+  --pat-fg: #3f5c10;
+  --il-bg: #ecdcd3;
+  --il-fg: #6b2e18;
+}
+
+body.body--dark {
+  --page: #121619;
+  --surface: #1d2327;
+  --surface-2: #232a2f;
+  --line: #323b42;
+  --line-strong: #5b6c7a;
+  --text: #e3e8ec;
+  --text-2: #aeb8c2;
+  --text-3: #9aa5b1;
+  --soft: #2b3339;
+  --tint: #16312f;
+  --on-tint: #9fe0da;
+  --weekend-bg: #283037;
+  --weekend-fg: #d0d7de;
+  --focus: #5ec4bf;
+  --error: #ff8787;
+  --error-soft: #3b1f22;
+  --warn: #f5b45a;
+  --warn-soft: #3a2e14;
+  --on-warn: #f5c97a;
+  --ok: #69db9a;
+  --ok-soft: #17301f;
+  --pending: #e5b55c;
+  --level: #c3ccd5;
+  --on-level: #121619;
+  --header-bg: #1d2327;
+  --header-fg: #e3e8ec;
+  --header-pill: rgba(255, 255, 255, 0.08);
+  --off-cell: #9aa5b1;
+  --card-shadow: none;
+
+  --d-bg: #3a2f0b;
+  --d-fg: #ffd666;
+  --e-bg: #3d2314;
+  --e-fg: #ffb38a;
+  --n-bg: #1e2550;
+  --n-fg: #aab6ff;
+  --off-bg: #2b3339;
+  --off-fg: #b9c3cc;
+  --al-bg: #12301f;
+  --al-fg: #7ee2a8;
+  --ol-bg: #0f2a3d;
+  --ol-fg: #8fd0f7;
+  --req-bg: #2a1a40;
+  --req-fg: #d0a8ff;
+  --sl-bg: #3d1a1a;
+  --sl-fg: #ff9e9e;
+  --pl-bg: #33270f;
+  --pl-fg: #f0c987;
+  --mnl-bg: #3a1836;
+  --mnl-fg: #f3a6e8;
+  --co-bg: #10302d;
+  --co-fg: #82dcd2;
+  --bl-bg: #34302c;
+  --bl-fg: #d9d2c9;
+  --wl-bg: #3d1828;
+  --wl-fg: #ff9cc6;
+  --mat-bg: #3b2216;
+  --mat-fg: #ffb08a;
+  --pat-bg: #1f2c12;
+  --pat-fg: #b5dc84;
+  --il-bg: #33231c;
+  --il-fg: #e8b9a3;
+
+  // Brand colours become lighter tones on dark surfaces; fills then carry dark text.
+  --q-primary: #5ec4bf;
+  --q-secondary: #9db8dc;
+  --q-positive: #6fd39a;
+  --q-negative: #ff8a80;
+  --q-info: #82b4ff;
+  --q-warning: #f5b45a;
+
+  $fills: '.bg-primary, .bg-secondary, .bg-positive, .bg-negative, .bg-info, .bg-warning, .bg-pending, .bg-muted';
+  :is(#{$fills}) {
+    color: #121619;
+  }
+  :is(#{$fills}).text-white {
+    color: #121619 !important;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Semantic colour names, usable as Quasar `color` / `text-color` props.
+// ---------------------------------------------------------------------------
+$semantic: (
+  'ink': --text,
+  'muted': --text-2,
+  'subtle': --text-3,
+  'soft': --soft,
+  'tint': --tint,
+  'on-tint': --on-tint,
+  'pending': --pending,
+  'error-soft': --error-soft,
+  'warn-soft': --warn-soft,
+  'on-warn': --on-warn,
+  'ok-soft': --ok-soft,
+  'surface': --surface,
+  'page': --page,
+);
+
+@each $name, $var in $semantic {
+  .text-#{$name} {
+    color: var(#{$var}) !important;
+  }
+  .bg-#{$name} {
+    background: var(#{$var}) !important;
+  }
+}
+
 body {
-  background: #f4f6f8;
-  color: #1f2933;
+  background: var(--page);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -14,14 +197,16 @@ body {
 }
 
 .page-title {
+  margin: 0;
   font-size: 1.25rem;
   font-weight: 700;
+  line-height: 1.4;
   letter-spacing: 0.02em;
 }
 
 .surface {
-  background: #fff;
-  border: 1px solid #e3e8ec;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 12px;
 }
 
@@ -29,23 +214,25 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-// ---------------------------------------------------------------------------
-// Shift colours (kept in sync with SHIFT_META in src/constants/labels.ts)
-// ---------------------------------------------------------------------------
-$shifts: (
-  'd': (#fff3c4, #7a5600),
-  'e': (#ffdcc2, #8a3700),
-  'n': (#d9defc, #26337f),
-  'off': (#f1f3f5, #6b7280),
-  'al': (#d3f5df, #14653a),
-  'ol': (#d6eefc, #0b5a85),
-  'req': (#efe2fd, #6a2aa6),
-);
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
-@each $name, $c in $shifts {
+// ---------------------------------------------------------------------------
+// Shift colours
+// ---------------------------------------------------------------------------
+@each $name in d, e, n, off, al, ol, req, sl, pl, mnl, co, bl, wl, mat, pat, il {
   .shift-#{$name} {
-    background-color: nth($c, 1) !important;
-    color: nth($c, 2) !important;
+    background-color: var(--#{$name}-bg) !important;
+    color: var(--#{$name}-fg) !important;
   }
 }
 
@@ -53,17 +240,29 @@ $shifts: (
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 38px;
-  height: 24px;
+  min-width: 2.375rem;
+  height: 1.5rem;
   padding: 0 6px;
   border-radius: 6px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 0.75rem;
   letter-spacing: 0.02em;
 }
 
 .nav-active {
-  color: $primary;
-  background: rgba(15, 110, 114, 0.08);
+  color: var(--on-tint);
+  background: var(--tint);
   font-weight: 600;
+}
+
+// Empty states: one line of guidance plus an optional action.
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-2);
+  .empty-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text);
+  }
 }
