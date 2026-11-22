@@ -14,9 +14,9 @@
           :aria-expanded="drawer"
           @click="drawer = !drawer"
         />
-        <router-link :to="{ name: 'schedule' }" class="brand" aria-label="護理排班，回到班表">
+        <router-link :to="{ name: 'schedule' }" class="brand" aria-label="排班系統，回到班表">
           <span class="brand-mark" aria-hidden="true"><q-icon name="medical_services" size="18px" /></span>
-          <span class="brand-name">護理排班</span>
+          <span class="brand-name">排班系統</span>
         </router-link>
         <span v-if="headerWard" class="header-ward">{{ headerWard }}</span>
         <q-space />
@@ -41,6 +41,10 @@
                 <q-item v-close-popup clickable :to="{ name: 'help' }">
                   <q-item-section avatar><q-icon name="help_outline" /></q-item-section>
                   <q-item-section>使用說明</q-item-section>
+                </q-item>
+                <q-item v-close-popup clickable :to="{ name: 'about' }">
+                  <q-item-section avatar><q-icon name="info_outline" /></q-item-section>
+                  <q-item-section>About</q-item-section>
                 </q-item>
                 <q-item v-close-popup clickable class="text-negative" @click="logout">
                   <q-item-section avatar><q-icon name="logout" color="negative" /></q-item-section>
@@ -94,6 +98,10 @@
           <q-item v-ripple clickable :to="{ name: 'help' }" active-class="nav-active" class="nav-item">
             <q-item-section avatar class="nav-icon"><q-icon name="help_outline" /></q-item-section>
             <q-item-section>使用說明</q-item-section>
+          </q-item>
+          <q-item v-ripple clickable :to="{ name: 'about' }" active-class="nav-active" class="nav-item">
+            <q-item-section avatar class="nav-icon"><q-icon name="info_outline" /></q-item-section>
+            <q-item-section>About</q-item-section>
           </q-item>
         </q-list>
         <q-space />
@@ -181,7 +189,7 @@ const primaryNav = computed(() => nav.value.primary.map((n) => ({ ...n, badge: b
 const manageNav = computed(() => nav.value.manage);
 
 /** Pages reached through 「更多」 keep that tab selected, so people always know where they are. */
-const MORE_PAGES = new Set(['more', 'help', 'calendar', 'wards', 'emails', 'staff', 'settings']);
+const MORE_PAGES = new Set(['more', 'help', 'about', 'calendar', 'wards', 'emails', 'staff', 'settings']);
 const tabs = computed(() => {
   const current = String(route.name ?? '');
   return [

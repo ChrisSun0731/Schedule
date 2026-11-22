@@ -43,6 +43,14 @@
           </q-item-section>
           <q-item-section side><q-icon name="chevron_right" class="text-subtle" /></q-item-section>
         </q-item>
+        <q-item clickable :to="{ name: 'about' }" class="list-item">
+          <q-item-section avatar><q-icon name="info_outline" class="text-muted" /></q-item-section>
+          <q-item-section>
+            <q-item-label class="text-weight-medium">About</q-item-label>
+            <q-item-label caption class="text-muted">Who builds the system and who to contact.</q-item-label>
+          </q-item-section>
+          <q-item-section side><q-icon name="chevron_right" class="text-subtle" /></q-item-section>
+        </q-item>
         <q-item v-if="calendarScheduleId" clickable :to="{ name: 'calendar', query: { schedule: calendarScheduleId } }" class="list-item">
           <q-item-section avatar><q-icon name="event_available" class="text-muted" /></q-item-section>
           <q-item-section>

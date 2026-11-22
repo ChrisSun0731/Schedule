@@ -31,6 +31,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'more', name: 'more', component: () => import('@/pages/MorePage.vue') },
       /** Every function explained, for the signed-in role. */
       { path: 'help', name: 'help', component: () => import('@/pages/HelpPage.vue') },
+      /** What the system is, how it handles data, who to contact, version info. */
+      { path: 'about', name: 'about', component: () => import('@/pages/AboutPage.vue') },
       {
         path: 'wards',
         name: 'wards',
