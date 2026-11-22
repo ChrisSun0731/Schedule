@@ -63,3 +63,7 @@ This needs no Cloud Functions or Blaze plan, but the Firebase project needs a on
 Until this is done, the button shows "系統尚未啟用 Google Calendar API". Nurses can still use **下載 .ics** to import their shifts manually.
 
 Code: `src/pages/CalendarPage.vue` (landing page), `src/services/googleCalendar.ts` (authorization and sync), and `src/services/calendarExport.ts` (shift → event / `.ics` conversion, unit-tested).
+
+## License
+
+© 2026 Chris Sun. Licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): you may share and adapt this project for non-commercial purposes, with attribution, if you distribute your changes under the same license. See [LICENSE](LICENSE).

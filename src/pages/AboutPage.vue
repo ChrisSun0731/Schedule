@@ -42,6 +42,26 @@
         </div>
       </section>-->
 
+      <section class="about-section" aria-labelledby="about-source">
+        <h2 id="about-source" class="about-h2">Source code</h2>
+        <p class="source-text">
+          The source code is public on GitHub. You may copy and adapt it for non-commercial purposes, as long as you credit
+          the author and share your changes under the same license.
+        </p>
+        <div class="source-row">
+          <a :href="SOURCE_URL" target="_blank" rel="noopener" class="source-link">
+            <q-icon name="code" size="20px" aria-hidden="true" />
+            <span><span class="text-muted">github.com/</span>{{ SOURCE_URL.replace('https://github.com/', '') }}</span>
+            <q-icon name="open_in_new" size="16px" class="text-muted" aria-hidden="true" />
+            <span class="sr-only">(opens in a new tab)</span>
+          </a>
+          <a :href="LICENSE.url" target="_blank" rel="license noopener" class="license-badge">
+            {{ LICENSE.name }}<span class="sr-only"> license (opens in a new tab)</span>
+          </a>
+        </div>
+        <p class="copyright">© {{ COPYRIGHT_YEAR }} {{ DEVELOPER.name }}. Licensed under {{ LICENSE.name }}.</p>
+      </section>
+
       <footer class="about-actions">
         <q-btn unelevated no-caps color="primary" icon="rate_review" label="Share feedback" :href="feedbackHref" />
       </footer>
@@ -63,7 +83,12 @@ const wards = useWardsStore();
 
 const DEVELOPER = { name: 'Chris', email: 'chris20090731@gmail.com' };
 
-const feedbackHref = `mailto:${DEVELOPER.email}?subject=${encodeURIComponent('排班系統 feedback')}`;
+const SOURCE_URL = 'https://github.com/ChrisSun0731/Schedule';
+/** Same licence as the LICENSE file at the repository root. */
+const LICENSE = { name: 'CC BY-NC-SA 4.0', url: 'https://creativecommons.org/licenses/by-nc-sa/4.0/' };
+const COPYRIGHT_YEAR = 2026;
+
+const feedbackHref =`mailto:${DEVELOPER.email}?subject=${encodeURIComponent('排班系統 feedback')}`;
 
 interface Person {
   name: string;
@@ -233,6 +258,63 @@ const contacts = computed<{ label: string; people: Person[]; empty: string }[]>(
   font-size: 0.8125rem;
   color: var(--text-2);
   margin-bottom: 2px !important;
+}
+
+.source-text {
+  margin: 0 0 12px;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+}
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  &:hover {
+    border-color: var(--focus);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+.license-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  &:hover {
+    background: var(--tint);
+    color: var(--on-tint);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+.copyright {
+  margin: 12px 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-2);
 }
 
 .about-actions {

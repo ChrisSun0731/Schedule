@@ -2,6 +2,7 @@
   "name": "nursing-shift-scheduler",
   "version": "1.0.0",
   "description": "護理排班與換班管理系統",
+  "license": "CC-BY-NC-SA-4.0",
   "productName": "護理排班系統",
   "type": "module",
   "private": true,
